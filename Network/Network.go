@@ -223,8 +223,5 @@ type ILinkEventHandler interface {
 	OnOutMsgHighWaterMark(szCount int) int
 }
 
-type INetwork interface {
-}
-
 type Network struct {
 }
