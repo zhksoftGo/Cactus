@@ -15,9 +15,9 @@ const (
 	MsgEncodingMax       = MsgEncoding_Binary | MsgEncoding_Packet | MsgEncoding_XML | MsgEncoding_JSON | MsgEncoding_TextHtml
 )
 
-type ServiceInfoBase struct {
+type ServiceInfo struct {
 	///  服务名字</summary>
-	name string
+	serviceKey string
 
 	///  地址及端口
 	rawAddr string
@@ -73,7 +73,7 @@ type INetworkSession interface {
 	GetMsgEncoding() string
 
 	///  Gets the ServiceInfoBase.
-	GetServiceInfoBase() *ServiceInfoBase
+	GetServiceInfoBase() *ServiceInfo
 
 	/// 发送二进制格式消息(里面实际内容也可以是XML或JSON字符串), 原始数据不含6字节网络头.
 	/// 适用于TCP/TCPS/UDP/RUDP协议下的消息发送.
@@ -119,7 +119,7 @@ type ILinkEventHandler interface {
 	GetKey() string
 
 	/// 服务已经准备好, 在收到此函数调用之前, 不要发消息.
-	OnReadyToServe(str string)
+	OnReadyToServe(serviceKey string)
 
 	/// 自身关闭(bNotify = true时)、对方断开、网络出错、网络服务结束时回调.
 	OnClose(e ENetworkError)
@@ -143,5 +143,59 @@ type ILinkEventHandler interface {
 	OnOutMsgHighWaterMark(szCount int) int
 }
 
+type LinkEventHandler struct {
+	session *INetworkSession
+	key     string
+	isReady bool
+}
+
+type ILinkEventHandlerManager interface {
+	CreateLinkEventHandler(serviceInfo string, session *INetworkSession)
+	OnConnectFailed(serviceInfo string)
+	OnExit()
+}
+
 type Network struct {
+	serviceInfos []ServiceInfo
+	evManager    *ILinkEventHandlerManager
+}
+
+func (net *Network) Initialize(evMngr *ILinkEventHandlerManager) bool {
+	return true
+}
+
+func (net *Network) GetLinkEventHandlerManager() *ILinkEventHandlerManager {
+	return net.evManager
+}
+
+func (net *Network) AddServiceInfo(pInfo *ServiceInfo) bool {
+	return true
+}
+
+func (net *Network) GetServiceInfo(key string) *ServiceInfo {
+	return nil
+}
+
+func (net *Network) Serve() {
+
+}
+
+// For a TCP Server
+func (net *Network) Add_TCP_Acceptor(pInfo *ServiceInfo) bool {
+	return true
+}
+
+// For a TCP Client
+func (net *Network) TCP_Connect(key string, timeOut int) {
+
+}
+
+// For a UDP Server
+func (net *Network) Add_UDP_Listener(pInfo *ServiceInfo) bool {
+	return true
+}
+
+// For a UDP Client
+func (net *Network) UDP_Connect(key string, timeOut int) {
+
 }
