@@ -27,6 +27,7 @@ type INetworkSession interface {
 
 type tcpSession struct {
 	svcInfo      *ServiceInfo
+	addrIndex    int
 	localAddr    net.Addr
 	remoteAddr   net.Addr
 	conn         net.Conn // original connection

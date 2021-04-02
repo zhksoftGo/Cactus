@@ -287,6 +287,7 @@ func stdloopRun(s *NetworkModule, l *stdloop) {
 	var err error
 	tick := make(chan bool)
 	tock := make(chan time.Duration)
+
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
 		if l.idx == 0 {
@@ -296,6 +297,7 @@ func stdloopRun(s *NetworkModule, l *stdloop) {
 				}
 			}()
 		}
+
 		s.signalShutdown(err)
 		s.loopwg.Done()
 		stdloopEgress(s, l)
@@ -325,6 +327,7 @@ func stdloopRun(s *NetworkModule, l *stdloop) {
 				err = errClosing
 			}
 			tock <- delay
+
 		case v := <-l.ch:
 			switch v := v.(type) {
 			case error:
@@ -341,6 +344,7 @@ func stdloopRun(s *NetworkModule, l *stdloop) {
 				err = stdloopRead(s, l, v.c, nil)
 			}
 		}
+
 		if err != nil {
 			return
 		}
@@ -371,15 +375,18 @@ loop:
 func stdloopError(s *NetworkModule, l *stdloop, c *tcpSession, err error) error {
 	delete(l.conns, c)
 	closeEvent := true
+
 	switch atomic.LoadInt32(&c.done) {
 	case 0: // read error
 		c.conn.Close()
 		if err == io.EOF {
 			err = nil
 		}
+
 	case 1: // closed
 		c.conn.Close()
 		err = nil
+
 	case 2: // detached
 		err = nil
 		if s.events.Detached == nil {
@@ -392,6 +399,7 @@ func stdloopError(s *NetworkModule, l *stdloop, c *tcpSession, err error) error 
 			}
 		}
 	}
+
 	if closeEvent {
 		if s.events.Closed != nil {
 			switch s.events.Closed(c, err) {
@@ -400,6 +408,7 @@ func stdloopError(s *NetworkModule, l *stdloop, c *tcpSession, err error) error 
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -416,11 +425,13 @@ func (c *stddetachedConn) Read(p []byte) (n int, err error) {
 			c.in = nil
 			return
 		}
+
 		copy(p, c.in[:len(p)])
 		n = len(p)
 		c.in = c.in[n:]
 		return
 	}
+
 	return c.conn.Read(p)
 }
 
@@ -440,6 +451,7 @@ func stdloopRead(s *NetworkModule, l *stdloop, c *tcpSession, in []byte) error {
 		c.donein = append(c.donein, in...)
 		return nil
 	}
+
 	if s.events.Data != nil {
 		out, action := s.events.Data(c, in)
 		if len(out) > 0 {
@@ -448,6 +460,7 @@ func stdloopRead(s *NetworkModule, l *stdloop, c *tcpSession, in []byte) error {
 			}
 			c.conn.Write(out)
 		}
+
 		switch action {
 		case Shutdown:
 			return errClosing
@@ -457,23 +470,27 @@ func stdloopRead(s *NetworkModule, l *stdloop, c *tcpSession, in []byte) error {
 			return stdloopClose(s, l, c)
 		}
 	}
+
 	return nil
 }
 
 func stdloopReadUDP(s *NetworkModule, l *stdloop, c *udpSession) error {
 	if s.events.Data != nil {
 		out, action := s.events.Data(c, c.in)
+
 		if len(out) > 0 {
 			if s.events.PreWrite != nil {
 				s.events.PreWrite()
 			}
 			s.lns[c.addrIndex].pconn.WriteTo(out, c.remoteAddr)
 		}
+
 		switch action {
 		case Shutdown:
 			return errClosing
 		}
 	}
+
 	return nil
 }
 
@@ -503,12 +520,14 @@ func stdloopAccept(s *NetworkModule, l *stdloop, c *tcpSession) error {
 			}
 			c.conn.Write(out)
 		}
+
 		if opts.TCPKeepAlive > 0 {
 			if c, ok := c.conn.(*net.TCPConn); ok {
 				c.SetKeepAlive(true)
 				c.SetKeepAlivePeriod(opts.TCPKeepAlive)
 			}
 		}
+
 		switch action {
 		case Shutdown:
 			return errClosing
@@ -518,5 +537,6 @@ func stdloopAccept(s *NetworkModule, l *stdloop, c *tcpSession) error {
 			return stdloopClose(s, l, c)
 		}
 	}
+
 	return nil
 }
