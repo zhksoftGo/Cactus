@@ -52,14 +52,14 @@ const (
 )
 
 type stdloop struct {
-	idx   int                       // loop index
-	ch    chan interface{}          // command channel
-	conns map[*INetworkSession]bool // track all the conns bound to this loop
+	idx   int                  // loop index
+	ch    chan interface{}     // command channel
+	conns map[*tcpSession]bool // track all the conns bound to this loop
 }
 
-type Network struct {
+type NetworkModule struct {
 	svcInfos  []ServiceInfo
-	evManager *ILinkEventHandlerManager
+	evManager IEventHandlerManager
 	loops     []*stdloop     // all the loops
 	lns       []*listener    // all the listeners
 	loopwg    sync.WaitGroup // loop close waitgroup
@@ -69,11 +69,7 @@ type Network struct {
 	accepted  uintptr        // accept counter
 }
 
-func (s *Network) Run(evMngr *ILinkEventHandlerManager, numLoops int) error {
-
-	if evMngr == nil {
-		return errors.New("LinkEventHandlerManager is nil")
-	}
+func (s *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 	defer func() {
 		for _, ln := range s.lns {
@@ -92,7 +88,7 @@ func (s *Network) Run(evMngr *ILinkEventHandlerManager, numLoops int) error {
 		s.loops = append(s.loops, &stdloop{
 			idx:   i,
 			ch:    make(chan interface{}),
-			conns: make(map[*INetworkSession]bool),
+			conns: make(map[*tcpSession]bool),
 		})
 	}
 
@@ -139,7 +135,7 @@ func (s *Network) Run(evMngr *ILinkEventHandlerManager, numLoops int) error {
 	return ferr
 }
 
-func (s *Network) GetServiceInfo(key string) *ServiceInfo {
+func (s *NetworkModule) GetServiceInfo(key string) *ServiceInfo {
 	for _, info := range s.svcInfos {
 		if info.serviceKey == key {
 			return &info
@@ -162,7 +158,7 @@ func (s *Network) GetServiceInfo(key string) *ServiceInfo {
 //  udp6  - IPv6
 //  unix  - Unix Domain Socket
 // The "tcp" network scheme is assumed when one is not specified.
-func (s *Network) AddService(svcInfo ServiceInfo) error {
+func (s *NetworkModule) AddService(svcInfo ServiceInfo) error {
 
 	for _, info := range s.svcInfos {
 		if info.serviceKey == svcInfo.serviceKey {
@@ -215,12 +211,12 @@ func (s *Network) AddService(svcInfo ServiceInfo) error {
 	return nil
 }
 
-func (s *Network) Connect(svcKey string, timeOut int) {
+func (s *NetworkModule) Connect(svcKey string, timeOut int) {
 
 }
 
 // waitForShutdown waits for a signal to shutdown
-func (s *Network) waitForShutdown() error {
+func (s *NetworkModule) waitForShutdown() error {
 	s.cond.L.Lock()
 	s.cond.Wait()
 	err := s.serr
@@ -229,14 +225,14 @@ func (s *Network) waitForShutdown() error {
 }
 
 // signalShutdown signals a shutdown an begins server closing
-func (s *Network) signalShutdown(err error) {
+func (s *NetworkModule) signalShutdown(err error) {
 	s.cond.L.Lock()
 	s.serr = err
 	s.cond.Signal()
 	s.cond.L.Unlock()
 }
 
-func stdlistenerRun(s *Network, ln *listener, lnidx int) {
+func stdlistenerRun(s *NetworkModule, ln *listener, lnidx int) {
 	var ferr error
 	defer func() {
 		s.signalShutdown(ferr)
@@ -287,13 +283,13 @@ func stdlistenerRun(s *Network, ln *listener, lnidx int) {
 	}
 }
 
-func stdloopRun(s *Network, l *stdloop) {
+func stdloopRun(s *NetworkModule, l *stdloop) {
 	var err error
 	tick := make(chan bool)
 	tock := make(chan time.Duration)
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
-		if l.idx == 0 && s.events.Tick != nil {
+		if l.idx == 0 {
 			close(tock)
 			go func() {
 				for range tick {
@@ -305,7 +301,8 @@ func stdloopRun(s *Network, l *stdloop) {
 		stdloopEgress(s, l)
 		s.loopwg.Done()
 	}()
-	if l.idx == 0 && s.events.Tick != nil {
+
+	if l.idx == 0 {
 		go func() {
 			for {
 				tick <- true
@@ -317,11 +314,12 @@ func stdloopRun(s *Network, l *stdloop) {
 			}
 		}()
 	}
+
 	//fmt.Println("-- loop started --", l.idx)
 	for {
 		select {
 		case <-tick:
-			delay, action := s.events.Tick()
+			delay, action := s.evManager.Tick()
 			switch action {
 			case Shutdown:
 				err = errClosing
@@ -349,7 +347,7 @@ func stdloopRun(s *Network, l *stdloop) {
 	}
 }
 
-func stdloopEgress(s *Network, l *stdloop) {
+func stdloopEgress(s *NetworkModule, l *stdloop) {
 	var closed bool
 loop:
 	for v := range l.ch {
@@ -370,7 +368,7 @@ loop:
 	}
 }
 
-func stdloopError(s *Network, l *stdloop, c *tcpSession, err error) error {
+func stdloopError(s *NetworkModule, l *stdloop, c *tcpSession, err error) error {
 	delete(l.conns, c)
 	closeEvent := true
 	switch atomic.LoadInt32(&c.done) {
@@ -400,6 +398,124 @@ func stdloopError(s *Network, l *stdloop, c *tcpSession, err error) error {
 			case Shutdown:
 				return errClosing
 			}
+		}
+	}
+	return nil
+}
+
+type stddetachedConn struct {
+	conn net.Conn // original conn
+	in   []byte   // extra input data
+}
+
+func (c *stddetachedConn) Read(p []byte) (n int, err error) {
+	if len(c.in) > 0 {
+		if len(c.in) <= len(p) {
+			copy(p, c.in)
+			n = len(c.in)
+			c.in = nil
+			return
+		}
+		copy(p, c.in[:len(p)])
+		n = len(p)
+		c.in = c.in[n:]
+		return
+	}
+	return c.conn.Read(p)
+}
+
+func (c *stddetachedConn) Write(p []byte) (n int, err error) {
+	return c.conn.Write(p)
+}
+
+func (c *stddetachedConn) Close() error {
+	return c.conn.Close()
+}
+
+func (c *stddetachedConn) Wake() {}
+
+func stdloopRead(s *NetworkModule, l *stdloop, c *tcpSession, in []byte) error {
+	if atomic.LoadInt32(&c.done) == 2 {
+		// should not ignore reads for detached connections
+		c.donein = append(c.donein, in...)
+		return nil
+	}
+	if s.events.Data != nil {
+		out, action := s.events.Data(c, in)
+		if len(out) > 0 {
+			if s.events.PreWrite != nil {
+				s.events.PreWrite()
+			}
+			c.conn.Write(out)
+		}
+		switch action {
+		case Shutdown:
+			return errClosing
+		case Detach:
+			return stdloopDetach(s, l, c)
+		case Close:
+			return stdloopClose(s, l, c)
+		}
+	}
+	return nil
+}
+
+func stdloopReadUDP(s *NetworkModule, l *stdloop, c *udpSession) error {
+	if s.events.Data != nil {
+		out, action := s.events.Data(c, c.in)
+		if len(out) > 0 {
+			if s.events.PreWrite != nil {
+				s.events.PreWrite()
+			}
+			s.lns[c.addrIndex].pconn.WriteTo(out, c.remoteAddr)
+		}
+		switch action {
+		case Shutdown:
+			return errClosing
+		}
+	}
+	return nil
+}
+
+func stdloopDetach(s *NetworkModule, l *stdloop, c *tcpSession) error {
+	atomic.StoreInt32(&c.done, 2)
+	c.conn.SetReadDeadline(time.Now())
+	return nil
+}
+
+func stdloopClose(s *NetworkModule, l *stdloop, c *tcpSession) error {
+	atomic.StoreInt32(&c.done, 1)
+	c.conn.SetReadDeadline(time.Now())
+	return nil
+}
+
+func stdloopAccept(s *NetworkModule, l *stdloop, c *tcpSession) error {
+	l.conns[c] = true
+	c.addrIndex = c.lnidx
+	c.localAddr = s.lns[c.lnidx].lnaddr
+	c.remoteAddr = c.conn.RemoteAddr()
+
+	if s.events.Opened != nil {
+		out, opts, action := s.events.Opened(c)
+		if len(out) > 0 {
+			if s.events.PreWrite != nil {
+				s.events.PreWrite()
+			}
+			c.conn.Write(out)
+		}
+		if opts.TCPKeepAlive > 0 {
+			if c, ok := c.conn.(*net.TCPConn); ok {
+				c.SetKeepAlive(true)
+				c.SetKeepAlivePeriod(opts.TCPKeepAlive)
+			}
+		}
+		switch action {
+		case Shutdown:
+			return errClosing
+		case Detach:
+			return stdloopDetach(s, l, c)
+		case Close:
+			return stdloopClose(s, l, c)
 		}
 	}
 	return nil
