@@ -34,7 +34,7 @@ type IEventHandler interface {
 }
 
 type EventHandler struct {
-	session INetworkSession
+	Session INetworkSession
 	ready   bool
 }
 
@@ -83,15 +83,15 @@ type IEventHandlerManager interface {
 type EventHandlerManager struct {
 }
 
-func (evMngr *EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
-	ev := EventHandler{session: session}
+func (evMngr EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
+	ev := EventHandler{Session: session}
 	return ev
 }
 
-func (evMngr *EventHandlerManager) OnConnectFailed(svcKey string) {
+func (evMngr EventHandlerManager) OnConnectFailed(svcKey string) {
 
 }
 
-func (evMngr *EventHandlerManager) OnShutdown() {
+func (evMngr EventHandlerManager) OnShutdown() {
 
 }
