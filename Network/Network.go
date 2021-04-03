@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zhksoftGo/Packet"
 )
 
 const (
@@ -20,20 +22,6 @@ const (
 	MsgEncodingMax       = MsgEncoding_Binary | MsgEncoding_Packet | MsgEncoding_XML | MsgEncoding_JSON | MsgEncoding_TextHtml
 )
 
-type ServiceInfo struct {
-	///  服务名字</summary>
-	serviceKey string
-
-	///  协议、地址及端口
-	url string
-
-	///  是否是服务器
-	bIsServer bool
-
-	///  接入的合法地址范围(只对服务器有效)
-	clientIPAddress string
-}
-
 var errClosing = errors.New("closing")
 var errCloseConns = errors.New("close conns")
 
@@ -43,10 +31,13 @@ type Action int
 const (
 	// None indicates that no action should occur following an event.
 	None Action = iota
+
 	// Detach detaches a connection. Not available for UDP connections.
 	Detach
+
 	// Close closes the connection.
 	Close
+
 	// Shutdown shutdowns the server.
 	Shutdown
 )
@@ -58,7 +49,6 @@ type stdloop struct {
 }
 
 type NetworkModule struct {
-	svcInfos  []ServiceInfo
 	evManager IEventHandlerManager
 	loops     []*stdloop     // all the loops
 	lns       []*listener    // all the listeners
@@ -67,25 +57,20 @@ type NetworkModule struct {
 	cond      *sync.Cond     // shutdown signaler
 	serr      error          // signal error
 	accepted  uintptr        // accept counter
+	started   int32
 }
 
-func (s *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
+func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
-	defer func() {
-		for _, ln := range s.lns {
-			ln.close()
-		}
-	}()
-
-	s.evManager = evMngr
-	s.cond = sync.NewCond(&sync.Mutex{})
+	m.evManager = evMngr
+	m.cond = sync.NewCond(&sync.Mutex{})
 
 	if numLoops <= 0 {
 		numLoops = runtime.NumCPU()
 	}
 
 	for i := 0; i < numLoops; i++ {
-		s.loops = append(s.loops, &stdloop{
+		m.loops = append(m.loops, &stdloop{
 			idx:   i,
 			ch:    make(chan interface{}),
 			conns: make(map[*tcpSession]bool),
@@ -95,58 +80,48 @@ func (s *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 	var ferr error
 	defer func() {
 		// wait on a signal for shutdown
-		ferr = s.waitForShutdown()
+		ferr = m.waitForShutdown()
 
 		// notify all loops to close by closing all listeners
-		for _, l := range s.loops {
+		for _, l := range m.loops {
 			l.ch <- errClosing
 		}
 
 		// wait on all loops to main loop channel events
-		s.loopwg.Wait()
+		m.loopwg.Wait()
 
 		// shutdown all listeners
-		for i := 0; i < len(s.lns); i++ {
-			s.lns[i].close()
+		for i := 0; i < len(m.lns); i++ {
+			m.lns[i].close()
 		}
 
 		// wait on all listeners to complete
-		s.lnwg.Wait()
+		m.lnwg.Wait()
 
 		// close all connections
-		s.loopwg.Add(len(s.loops))
-		for _, l := range s.loops {
+		m.loopwg.Add(len(m.loops))
+		for _, l := range m.loops {
 			l.ch <- errCloseConns
 		}
-		s.loopwg.Wait()
+		m.loopwg.Wait()
 
 	}()
 
-	s.loopwg.Add(numLoops)
+	m.loopwg.Add(numLoops)
 	for i := 0; i < numLoops; i++ {
-		go stdloopRun(s, s.loops[i])
+		go stdloopRun(m, m.loops[i])
 	}
 
-	s.lnwg.Add(len(s.lns))
-	for i := 0; i < len(s.lns); i++ {
-		go stdlistenerRun(s, s.lns[i], i)
+	m.lnwg.Add(len(m.lns))
+	for i := 0; i < len(m.lns); i++ {
+		go stdlistenerRun(m, m.lns[i], i)
 	}
+
+	atomic.StoreInt32(&m.started, 1)
 
 	return ferr
 }
 
-func (s *NetworkModule) GetServiceInfo(key string) *ServiceInfo {
-	for _, info := range s.svcInfos {
-		if info.serviceKey == key {
-			return &info
-		}
-	}
-
-	return nil
-}
-
-// Serve starts handling events for the specified addresses.
-//
 // Addresses should use a scheme prefix and be formatted
 // like `tcp://192.168.0.10:9851` or `unix://socket`.
 // Valid network schemes:
@@ -158,19 +133,14 @@ func (s *NetworkModule) GetServiceInfo(key string) *ServiceInfo {
 //  udp6  - IPv6
 //  unix  - Unix Domain Socket
 // The "tcp" network scheme is assumed when one is not specified.
-func (s *NetworkModule) AddService(svcInfo ServiceInfo) error {
-
-	for _, info := range s.svcInfos {
-		if info.serviceKey == svcInfo.serviceKey {
-			return errors.New("Service with same name already exists")
-		}
-
-		s.svcInfos = append(s.svcInfos, svcInfo)
-	}
+func (m *NetworkModule) Listen(svcKey string, url string) error {
 
 	var stdlib bool
+
 	var ln listener
-	ln.network, ln.addr, ln.opts, stdlib = parseAddr(svcInfo.url)
+	ln.svcKey = svcKey
+
+	ln.network, ln.addr, ln.opts, stdlib = parseAddr(url)
 	if ln.network == "unix" {
 		os.RemoveAll(ln.addr)
 	}
@@ -206,37 +176,44 @@ func (s *NetworkModule) AddService(svcInfo ServiceInfo) error {
 		}
 	}
 
-	s.lns = append(s.lns, &ln)
+	if atomic.LoadInt32(&m.started) == 1 {
+		l := m.loops[0]
+		ln := &newListener{ln: &ln}
+		l.ch <- ln
+	} else {
+		m.lns = append(m.lns, &ln)
+	}
 
 	return nil
 }
 
-func (s *NetworkModule) Connect(svcKey string, timeOut int) {
+func (m *NetworkModule) Connect(key, url string, timeOut int) {
 
 }
 
 // waitForShutdown waits for a signal to shutdown
-func (s *NetworkModule) waitForShutdown() error {
-	s.cond.L.Lock()
-	s.cond.Wait()
-	err := s.serr
-	s.cond.L.Unlock()
+func (m *NetworkModule) waitForShutdown() error {
+	m.cond.L.Lock()
+	m.cond.Wait()
+	err := m.serr
+	m.cond.L.Unlock()
 	return err
 }
 
 // signalShutdown signals a shutdown an begins server closing
-func (s *NetworkModule) signalShutdown(err error) {
-	s.cond.L.Lock()
-	s.serr = err
-	s.cond.Signal()
-	s.cond.L.Unlock()
+func (m *NetworkModule) signalShutdown(err error) {
+	m.cond.L.Lock()
+	m.serr = err
+	m.cond.Signal()
+	m.cond.L.Unlock()
 }
 
-func stdlistenerRun(s *NetworkModule, ln *listener, lnidx int) {
+func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 	var ferr error
+
 	defer func() {
-		s.signalShutdown(ferr)
-		s.lnwg.Done()
+		m.signalShutdown(ferr)
+		m.lnwg.Done()
 	}()
 
 	var packet [0xFFFF]byte
@@ -249,13 +226,16 @@ func stdlistenerRun(s *NetworkModule, ln *listener, lnidx int) {
 				return
 			}
 
-			l := s.loops[int(atomic.AddUintptr(&s.accepted, 1))%len(s.loops)]
-			l.ch <- &udpSession{
+			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
+			s := &udpSession{
+				svcKey:     ln.svcKey,
 				addrIndex:  lnidx,
 				localAddr:  ln.lnaddr,
 				remoteAddr: addr,
 				in:         append([]byte{}, packet[:n]...),
 			}
+			s.eventHandler = m.evManager.CreateEventHandler(s)
+			l.ch <- s
 
 		} else {
 			// tcp
@@ -264,84 +244,72 @@ func stdlistenerRun(s *NetworkModule, ln *listener, lnidx int) {
 				ferr = err
 				return
 			}
-			l := s.loops[int(atomic.AddUintptr(&s.accepted, 1))%len(s.loops)]
-			c := &tcpSession{conn: conn, loop: l, lnidx: lnidx}
-			l.ch <- c
-			go func(c *tcpSession) {
+
+			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
+			s := &tcpSession{
+				svcKey: ln.svcKey,
+				conn:   conn,
+				loop:   l,
+				lnidx:  lnidx,
+			}
+			s.eventHandler = m.evManager.CreateEventHandler(s)
+			l.ch <- s
+
+			go func(session *tcpSession) {
 				var packet [0xFFFF]byte
 				for {
-					n, err := c.conn.Read(packet[:])
+					n, err := session.conn.Read(packet[:])
 					if err != nil {
-						c.conn.SetReadDeadline(time.Time{})
-						l.ch <- &stderr{c, err}
+						session.conn.SetReadDeadline(time.Time{})
+						l.ch <- &stderr{session, err}
 						return
 					}
-					l.ch <- &stdin{c, append([]byte{}, packet[:n]...)}
+
+					l.ch <- &stdin{session, append([]byte{}, packet[:n]...)}
 				}
-			}(c)
+			}(s)
 		}
 	}
 }
 
-func stdloopRun(s *NetworkModule, l *stdloop) {
+func stdloopRun(m *NetworkModule, l *stdloop) {
 	var err error
-	tick := make(chan bool)
-	tock := make(chan time.Duration)
 
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
-		if l.idx == 0 {
-			close(tock)
-			go func() {
-				for range tick {
-				}
-			}()
-		}
 
-		s.signalShutdown(err)
-		s.loopwg.Done()
-		stdloopEgress(s, l)
-		s.loopwg.Done()
+		m.signalShutdown(err)
+		m.loopwg.Done()
+		stdloopEgress(m, l)
+		m.loopwg.Done()
 	}()
-
-	if l.idx == 0 {
-		go func() {
-			for {
-				tick <- true
-				delay, ok := <-tock
-				if !ok {
-					break
-				}
-				time.Sleep(delay)
-			}
-		}()
-	}
 
 	//fmt.Println("-- loop started --", l.idx)
 	for {
 		select {
-		case <-tick:
-			delay, action := s.evManager.Tick()
-			switch action {
-			case Shutdown:
-				err = errClosing
-			}
-			tock <- delay
-
+		default:
 		case v := <-l.ch:
 			switch v := v.(type) {
 			case error:
 				err = v
+
 			case *tcpSession:
-				err = stdloopAccept(s, l, v)
+				err = stdloopAccept(m, l, v)
+
 			case *stdin:
-				err = stdloopRead(s, l, v.c, v.in)
+				err = stdloopRead(m, l, v.c, v.in)
+
 			case *udpSession:
-				err = stdloopReadUDP(s, l, v)
+				err = stdloopReadUDP(m, l, v)
+
 			case *stderr:
-				err = stdloopError(s, l, v.c, v.err)
+				err = stdloopError(m, l, v.c, v.err)
+
 			case wakeReq:
-				err = stdloopRead(s, l, v.c, nil)
+				err = stdloopRead(m, l, v.c, nil)
+
+			case *newListener:
+				err = stdloopNewListener(m, l, v.ln)
 			}
 		}
 
@@ -351,192 +319,147 @@ func stdloopRun(s *NetworkModule, l *stdloop) {
 	}
 }
 
-func stdloopEgress(s *NetworkModule, l *stdloop) {
+func stdloopEgress(m *NetworkModule, l *stdloop) {
 	var closed bool
+
 loop:
 	for v := range l.ch {
+
 		switch v := v.(type) {
 		case error:
 			if v == errCloseConns {
 				closed = true
 				for c := range l.conns {
-					stdloopClose(s, l, c)
+					stdloopClose(m, l, c)
 				}
 			}
+
 		case *stderr:
-			stdloopError(s, l, v.c, v.err)
+			stdloopError(m, l, v.c, v.err)
 		}
+
 		if len(l.conns) == 0 && closed {
 			break loop
 		}
 	}
 }
 
-func stdloopError(s *NetworkModule, l *stdloop, c *tcpSession, err error) error {
-	delete(l.conns, c)
+func stdloopError(m *NetworkModule, l *stdloop, session *tcpSession, err error) error {
+	delete(l.conns, session)
 	closeEvent := true
 
-	switch atomic.LoadInt32(&c.done) {
+	switch atomic.LoadInt32(&session.done) {
 	case 0: // read error
-		c.conn.Close()
+		session.conn.Close()
 		if err == io.EOF {
 			err = nil
 		}
 
 	case 1: // closed
-		c.conn.Close()
+		session.conn.Close()
 		err = nil
 
 	case 2: // detached
 		err = nil
-		if s.events.Detached == nil {
-			c.conn.Close()
-		} else {
-			closeEvent = false
-			switch s.events.Detached(c, &stddetachedConn{c.conn, c.donein}) {
-			case Shutdown:
-				return errClosing
-			}
+		closeEvent = false
+		switch session.eventHandler.OnDetached(&stddetachedConn{session.conn, session.donein}) {
+		case Shutdown:
+			return errClosing
 		}
 	}
 
 	if closeEvent {
-		if s.events.Closed != nil {
-			switch s.events.Closed(c, err) {
-			case Shutdown:
-				return errClosing
-			}
+		switch session.eventHandler.OnClosed(err) {
+		case Shutdown:
+			return errClosing
 		}
 	}
 
 	return nil
 }
 
-type stddetachedConn struct {
-	conn net.Conn // original conn
-	in   []byte   // extra input data
-}
-
-func (c *stddetachedConn) Read(p []byte) (n int, err error) {
-	if len(c.in) > 0 {
-		if len(c.in) <= len(p) {
-			copy(p, c.in)
-			n = len(c.in)
-			c.in = nil
-			return
-		}
-
-		copy(p, c.in[:len(p)])
-		n = len(p)
-		c.in = c.in[n:]
-		return
-	}
-
-	return c.conn.Read(p)
-}
-
-func (c *stddetachedConn) Write(p []byte) (n int, err error) {
-	return c.conn.Write(p)
-}
-
-func (c *stddetachedConn) Close() error {
-	return c.conn.Close()
-}
-
-func (c *stddetachedConn) Wake() {}
-
-func stdloopRead(s *NetworkModule, l *stdloop, c *tcpSession, in []byte) error {
-	if atomic.LoadInt32(&c.done) == 2 {
+func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) error {
+	if atomic.LoadInt32(&session.done) == 2 {
 		// should not ignore reads for detached connections
-		c.donein = append(c.donein, in...)
+		session.donein = append(session.donein, in...)
 		return nil
 	}
 
-	if s.events.Data != nil {
-		out, action := s.events.Data(c, in)
-		if len(out) > 0 {
-			if s.events.PreWrite != nil {
-				s.events.PreWrite()
-			}
-			c.conn.Write(out)
-		}
+	var pak Packet.Packet
+	pak.FromBuff(in)
+	action := session.eventHandler.OnRecvPacket(&pak)
 
-		switch action {
-		case Shutdown:
-			return errClosing
-		case Detach:
-			return stdloopDetach(s, l, c)
-		case Close:
-			return stdloopClose(s, l, c)
-		}
+	switch action {
+	case Shutdown:
+		return errClosing
+	case Detach:
+		return stdloopDetach(m, l, session)
+	case Close:
+		return stdloopClose(m, l, session)
 	}
 
 	return nil
 }
 
-func stdloopReadUDP(s *NetworkModule, l *stdloop, c *udpSession) error {
-	if s.events.Data != nil {
-		out, action := s.events.Data(c, c.in)
+func stdloopReadUDP(m *NetworkModule, l *stdloop, session *udpSession) error {
 
-		if len(out) > 0 {
-			if s.events.PreWrite != nil {
-				s.events.PreWrite()
-			}
-			s.lns[c.addrIndex].pconn.WriteTo(out, c.remoteAddr)
-		}
+	var pak Packet.Packet
+	pak.FromBuff(session.in)
+	action := session.eventHandler.OnRecvPacket(&pak)
 
-		switch action {
-		case Shutdown:
-			return errClosing
-		}
+	switch action {
+	case Shutdown:
+		return errClosing
 	}
 
 	return nil
 }
 
-func stdloopDetach(s *NetworkModule, l *stdloop, c *tcpSession) error {
-	atomic.StoreInt32(&c.done, 2)
-	c.conn.SetReadDeadline(time.Now())
+func stdloopDetach(m *NetworkModule, l *stdloop, session *tcpSession) error {
+	atomic.StoreInt32(&session.done, 2)
+	session.conn.SetReadDeadline(time.Now())
 	return nil
 }
 
-func stdloopClose(s *NetworkModule, l *stdloop, c *tcpSession) error {
-	atomic.StoreInt32(&c.done, 1)
-	c.conn.SetReadDeadline(time.Now())
+func stdloopClose(m *NetworkModule, l *stdloop, session *tcpSession) error {
+	atomic.StoreInt32(&session.done, 1)
+	session.conn.SetReadDeadline(time.Now())
 	return nil
 }
 
-func stdloopAccept(s *NetworkModule, l *stdloop, c *tcpSession) error {
-	l.conns[c] = true
-	c.addrIndex = c.lnidx
-	c.localAddr = s.lns[c.lnidx].lnaddr
-	c.remoteAddr = c.conn.RemoteAddr()
+func stdloopAccept(m *NetworkModule, l *stdloop, session *tcpSession) error {
+	l.conns[session] = true
+	session.addrIndex = session.lnidx
+	session.localAddr = m.lns[session.lnidx].lnaddr
+	session.remoteAddr = session.conn.RemoteAddr()
 
-	if s.events.Opened != nil {
-		out, opts, action := s.events.Opened(c)
-		if len(out) > 0 {
-			if s.events.PreWrite != nil {
-				s.events.PreWrite()
-			}
-			c.conn.Write(out)
-		}
-
-		if opts.TCPKeepAlive > 0 {
-			if c, ok := c.conn.(*net.TCPConn); ok {
-				c.SetKeepAlive(true)
-				c.SetKeepAlivePeriod(opts.TCPKeepAlive)
-			}
-		}
-
-		switch action {
-		case Shutdown:
-			return errClosing
-		case Detach:
-			return stdloopDetach(s, l, c)
-		case Close:
-			return stdloopClose(s, l, c)
+	opts, action := session.eventHandler.OnOpened()
+	if opts.TCPKeepAlive > 0 {
+		if conn, ok := session.conn.(*net.TCPConn); ok {
+			conn.SetKeepAlive(true)
+			conn.SetKeepAlivePeriod(opts.TCPKeepAlive)
 		}
 	}
+
+	switch action {
+	case Shutdown:
+		return errClosing
+	case Detach:
+		return stdloopDetach(m, l, session)
+	case Close:
+		return stdloopClose(m, l, session)
+	}
+
+	return nil
+}
+
+func stdloopNewListener(m *NetworkModule, l *stdloop, ln *listener) error {
+
+	idx := len(m.lns)
+
+	m.lns = append(m.lns, ln)
+	m.lnwg.Add(1)
+	go stdlistenerRun(m, ln, idx)
 
 	return nil
 }

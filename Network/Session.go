@@ -7,8 +7,7 @@ import (
 )
 
 type INetworkSession interface {
-	///  Gets the ServiceInfoBase.
-	GetServiceInfo() *ServiceInfo
+	GetServiceKey() string
 
 	/// 发送Packet二进制格式消息(里面实际内容也可以是XML或JSON字符串), 原始数据含6字节网络头.
 	SendPacket(pak *Packet.Packet) bool
@@ -26,12 +25,12 @@ type INetworkSession interface {
 }
 
 type tcpSession struct {
-	svcInfo      *ServiceInfo
+	svcKey       string
+	eventHandler IEventHandler
 	addrIndex    int
 	localAddr    net.Addr
 	remoteAddr   net.Addr
 	conn         net.Conn // original connection
-	eventHandler *ILinkEventHandler
 	loop         *stdloop // owner loop
 	lnidx        int      // index of listener
 	donein       []byte   // extra data for done connection
@@ -42,7 +41,7 @@ type wakeReq struct {
 	c *tcpSession
 }
 
-func (s *tcpSession) GetServiceInfo() *ServiceInfo       { return s.svcInfo }
+func (s *tcpSession) GetServiceKey() string              { return s.svcKey }
 func (s *tcpSession) SendPacket(pak *Packet.Packet) bool { return true }
 func (s *tcpSession) ShutDown(notify bool)               { s.conn.Close() }
 func (s *tcpSession) GetRemoteAddress() net.Addr         { return s.localAddr }
@@ -60,17 +59,50 @@ type stderr struct {
 }
 
 type udpSession struct {
-	svcInfo      *ServiceInfo
+	svcKey       string
+	eventHandler IEventHandler
 	addrIndex    int
 	localAddr    net.Addr
 	remoteAddr   net.Addr
 	in           []byte
-	eventHandler *ILinkEventHandler
 }
 
-func (s *udpSession) GetServiceInfo() *ServiceInfo       { return s.svcInfo }
+func (s *udpSession) GetServiceKey() string              { return s.svcKey }
 func (s *udpSession) SendPacket(pak *Packet.Packet) bool { return true }
 func (s *udpSession) ShutDown(notify bool)               {}
 func (s *udpSession) GetRemoteAddress() net.Addr         { return s.localAddr }
 func (s *udpSession) GetLocalAddress() net.Addr          { return s.remoteAddr }
 func (s *udpSession) Wake()                              {}
+
+type stddetachedConn struct {
+	conn net.Conn // original conn
+	in   []byte   // extra input data
+}
+
+func (c *stddetachedConn) Read(p []byte) (n int, err error) {
+	if len(c.in) > 0 {
+		if len(c.in) <= len(p) {
+			copy(p, c.in)
+			n = len(c.in)
+			c.in = nil
+			return
+		}
+
+		copy(p, c.in[:len(p)])
+		n = len(p)
+		c.in = c.in[n:]
+		return
+	}
+
+	return c.conn.Read(p)
+}
+
+func (c *stddetachedConn) Write(p []byte) (n int, err error) {
+	return c.conn.Write(p)
+}
+
+func (c *stddetachedConn) Close() error {
+	return c.conn.Close()
+}
+
+func (c *stddetachedConn) Wake() {}

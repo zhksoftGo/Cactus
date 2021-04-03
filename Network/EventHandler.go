@@ -7,34 +7,57 @@ import (
 	"github.com/zhksoftGo/Packet"
 )
 
-type ILinkEventHandler interface {
+type IEventHandler interface {
 
-	/// 获取底层的NetworkSession.
-	GetSession() *INetworkSession
-
-	/// 设置底层的NetworkSession.
-	SetSession(s *INetworkSession) bool
-
-	/// 设置标识.
-	SetKey(key string)
-
-	/// 获取标识.
-	GetKey() string
-
-	/// 服务已经准备好, 在收到此函数调用之前, 不要发消息.
-	OnReadyToServe(serviceKey string)
-
-	/// 自身关闭(notify = true时)、对方断开、网络出错、网络服务结束时回调.
-	OnClose()
+	// OnOpened fires when a new connection has opened.
+	// The info parameter has information about the connection such as
+	// it's local and remote address.
+	// Use the out return value to write data to the connection.
+	// The opts return value is used to set connection options.
+	OnOpened() (opts Options, action Action)
 
 	/// 收到对方发来的消息, 包含网络头. 里面具体数据可以是Packet/XML/JSON.
-	OnRecvPacket(pak *Packet.Packet) bool
+	OnRecvPacket(pak *Packet.Packet) Action
+
+	// OnClosed fires when a connection has closed.
+	// The err parameter is the last known connection error.
+	OnClosed(err error) (action Action)
+
+	// OnDetached fires when a connection has been previously detached.
+	// Once detached it's up to the receiver of this event to manage the
+	// state of the connection. The Closed event will not be called for
+	// this connection.
+	// The rwc parameter is a ReadWriteCloser that represents the
+	// underlying socket connection. It can be freely used in goroutines
+	// and should be closed when it's no longer needed.
+	OnDetached(rwc io.ReadWriteCloser) (action Action)
 }
 
-type LinkEventHandler struct {
-	session *INetworkSession
-	key     string
-	isReady bool
+type EventHandler struct {
+	session INetworkSession
+	ready   bool
+}
+
+func (ev EventHandler) OnOpened() (opts Options, action Action) {
+	ev.ready = true
+	opts = Options{time.Minute, true}
+	action = None
+	return
+}
+
+func (ev EventHandler) OnRecvPacket(pak *Packet.Packet) Action {
+	return None
+}
+
+func (ev EventHandler) OnClosed(err error) (action Action) {
+	action = None
+	return
+}
+
+func (ev EventHandler) OnDetached(rwc io.ReadWriteCloser) (action Action) {
+	rwc.Close()
+	action = None
+	return
 }
 
 // Options are set when the client opens.
@@ -50,41 +73,25 @@ type Options struct {
 }
 
 type IEventHandlerManager interface {
-	CreateEventHandler(svcInfo string, s *INetworkSession)
+	CreateEventHandler(session INetworkSession) IEventHandler
 
-	OnConnectFailed(serviceInfo string)
+	OnConnectFailed(svcKey string)
 
-	OnExit()
+	OnShutdown()
+}
 
-	// Opened fires when a new connection has opened.
-	// The info parameter has information about the connection such as
-	// it's local and remote address.
-	// Use the out return value to write data to the connection.
-	// The opts return value is used to set connection options.
-	Opened(c INetworkSession) (out []byte, opts Options, action Action)
+type EventHandlerManager struct {
+}
 
-	// Closed fires when a connection has closed.
-	// The err parameter is the last known connection error.
-	Closed(c INetworkSession, err error) (action Action)
+func (evMngr *EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
+	ev := EventHandler{session: session}
+	return ev
+}
 
-	// Detached fires when a connection has been previously detached.
-	// Once detached it's up to the receiver of this event to manage the
-	// state of the connection. The Closed event will not be called for
-	// this connection.
-	// The conn parameter is a ReadWriteCloser that represents the
-	// underlying socket connection. It can be freely used in goroutines
-	// and should be closed when it's no longer needed.
-	Detached(c INetworkSession, rwc io.ReadWriteCloser) (action Action)
+func (evMngr *EventHandlerManager) OnConnectFailed(svcKey string) {
 
-	// PreWrite fires just before any data is written to any client socket.
-	PreWrite()
+}
 
-	// Data fires when a connection sends the server data.
-	// The in parameter is the incoming data.
-	// Use the out return value to write data to the connection.
-	Data(c INetworkSession, in []byte) (out []byte, action Action)
+func (evMngr *EventHandlerManager) OnShutdown() {
 
-	// Tick fires immediately after the server starts and will fire again
-	// following the duration specified by the delay return value.
-	Tick() (delay time.Duration, action Action)
 }
