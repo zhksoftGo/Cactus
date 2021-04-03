@@ -8,13 +8,14 @@ import (
 )
 
 type listener struct {
-	ln      net.Listener
-	lnaddr  net.Addr
-	pconn   net.PacketConn
-	opts    addrOpts
-	network string
-	addr    string
-	svcKey  string
+	ln          net.Listener
+	lnaddr      net.Addr
+	pconn       net.PacketConn
+	opts        addrOpts
+	network     string
+	addr        string
+	svcKey      string
+	udpSessions map[net.Addr]*udpSession
 }
 
 func (ln *listener) close() {

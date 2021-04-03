@@ -13,15 +13,6 @@ import (
 	"github.com/zhksoftGo/Packet"
 )
 
-const (
-	MsgEncoding_Binary   = 0x1  // raw binary
-	MsgEncoding_Packet   = 0x2  // internal Packet binary
-	MsgEncoding_XML      = 0x4  // XML
-	MsgEncoding_JSON     = 0x8  // JSON
-	MsgEncoding_TextHtml = 0x10 // Text/Html
-	MsgEncodingMax       = MsgEncoding_Binary | MsgEncoding_Packet | MsgEncoding_XML | MsgEncoding_JSON | MsgEncoding_TextHtml
-)
-
 var errClosing = errors.New("closing")
 var errCloseConns = errors.New("close conns")
 
@@ -147,6 +138,7 @@ func (m *NetworkModule) Listen(svcKey string, url string) error {
 
 	var err error
 	if ln.network == "udp" {
+		ln.udpSessions = make(map[net.Addr]*udpSession)
 		if ln.opts.reusePort {
 			ln.pconn, err = reuseportListenPacket(ln.network, ln.addr)
 		} else {
@@ -227,14 +219,21 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 			}
 
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
-			s := &udpSession{
-				svcKey:     ln.svcKey,
-				addrIndex:  lnidx,
-				localAddr:  ln.lnaddr,
-				remoteAddr: addr,
-				in:         append([]byte{}, packet[:n]...),
+
+			s, ok := ln.udpSessions[addr]
+			if !ok {
+				s = &udpSession{
+					pconn:      ln.pconn,
+					svcKey:     ln.svcKey,
+					lnidx:      lnidx,
+					localAddr:  ln.lnaddr,
+					remoteAddr: addr,
+					in:         append([]byte{}, packet[:n]...),
+				}
+				s.eventHandler = m.evManager.CreateEventHandler(s)
+			} else {
+				s.in = append([]byte{}, packet[:n]...)
 			}
-			s.eventHandler = m.evManager.CreateEventHandler(s)
 			l.ch <- s
 
 		} else {
@@ -247,10 +246,12 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
 			s := &tcpSession{
-				svcKey: ln.svcKey,
-				conn:   conn,
-				loop:   l,
-				lnidx:  lnidx,
+				svcKey:     ln.svcKey,
+				conn:       conn,
+				loop:       l,
+				lnidx:      lnidx,
+				localAddr:  ln.lnaddr,
+				remoteAddr: conn.RemoteAddr(),
 			}
 			s.eventHandler = m.evManager.CreateEventHandler(s)
 			l.ch <- s
@@ -402,7 +403,6 @@ func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) e
 }
 
 func stdloopReadUDP(m *NetworkModule, l *stdloop, session *udpSession) error {
-
 	var pak Packet.Packet
 	pak.FromBuff(session.in)
 	action := session.eventHandler.OnRecvPacket(&pak)
@@ -429,9 +429,6 @@ func stdloopClose(m *NetworkModule, l *stdloop, session *tcpSession) error {
 
 func stdloopAccept(m *NetworkModule, l *stdloop, session *tcpSession) error {
 	l.conns[session] = true
-	session.addrIndex = session.lnidx
-	session.localAddr = m.lns[session.lnidx].lnaddr
-	session.remoteAddr = session.conn.RemoteAddr()
 
 	opts, action := session.eventHandler.OnOpened()
 	if opts.TCPKeepAlive > 0 {
