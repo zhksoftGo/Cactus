@@ -80,6 +80,24 @@ func (s *udpSession) GetRemoteAddress() net.Addr { return s.localAddr }
 func (s *udpSession) GetLocalAddress() net.Addr  { return s.remoteAddr }
 func (s *udpSession) Wake()                      {}
 
+type clientSession struct {
+	svcKey       string
+	eventHandler IEventHandler
+	conn         net.Conn
+	localAddr    net.Addr
+	remoteAddr   net.Addr
+}
+
+func (s *clientSession) GetServiceKey() string { return s.svcKey }
+func (s *clientSession) SendPacket(pak *Packet.Packet) error {
+	_, err := s.conn.Write(pak.GetUsedBuffer())
+	return err
+}
+func (s *clientSession) ShutDown(notify bool)       {}
+func (s *clientSession) GetRemoteAddress() net.Addr { return s.localAddr }
+func (s *clientSession) GetLocalAddress() net.Addr  { return s.remoteAddr }
+func (s *clientSession) Wake()                      {}
+
 type stddetachedConn struct {
 	conn net.Conn // original conn
 	in   []byte   // extra input data

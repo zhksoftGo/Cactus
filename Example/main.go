@@ -79,7 +79,8 @@ func main() {
 	go func() {
 		defer wg.Done()
 
-		module.Listen("GameServer", "tcp://:9081")
+		module.Listen("GMServer", "tcp://:9081")
+		module.Listen("CenterServer", "tcp://:9082")
 		module.Run(manager, 0)
 	}()
 

@@ -40,15 +40,19 @@ type stdloop struct {
 }
 
 type NetworkModule struct {
-	evManager IEventHandlerManager
-	loops     []*stdloop     // all the loops
-	lns       []*listener    // all the listeners
-	loopwg    sync.WaitGroup // loop close waitgroup
-	lnwg      sync.WaitGroup // listener close waitgroup
-	cond      *sync.Cond     // shutdown signaler
-	serr      error          // signal error
-	accepted  uintptr        // accept counter
-	started   int32
+	evManager      IEventHandlerManager
+	loops          []*stdloop       // all the loops
+	lns            []*listener      // all the listeners
+	connects       []*connector     // all the connectors
+	clientSessions []*clientSession // all the clients
+	clientMutex    sync.Mutex
+	loopwg         sync.WaitGroup // loop close waitgroup
+	lnwg           sync.WaitGroup // listener close waitgroup
+	connectwg      sync.WaitGroup // connector close waitgroup
+	cond           *sync.Cond     // shutdown signaler
+	serr           error          // signal error
+	accepted       uintptr        // accept counter
+	started        int32
 }
 
 func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
@@ -70,6 +74,8 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 	var ferr error
 	defer func() {
+		atomic.StoreInt32(&m.started, 0)
+
 		// wait on a signal for shutdown
 		ferr = m.waitForShutdown()
 
@@ -77,16 +83,12 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 		for _, l := range m.loops {
 			l.ch <- errClosing
 		}
-
-		// wait on all loops to main loop channel events
 		m.loopwg.Wait()
 
 		// shutdown all listeners
 		for i := 0; i < len(m.lns); i++ {
 			m.lns[i].close()
 		}
-
-		// wait on all listeners to complete
 		m.lnwg.Wait()
 
 		// close all connections
@@ -96,6 +98,13 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 		}
 		m.loopwg.Wait()
 
+		// close all connectors
+		m.clientMutex.Lock()
+		for i := 0; i < len(m.clientSessions); i++ {
+			m.clientSessions[i].conn.Close()
+		}
+		m.clientMutex.Unlock()
+		m.connectwg.Wait()
 	}()
 
 	m.loopwg.Add(numLoops)
@@ -106,6 +115,11 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 	m.lnwg.Add(len(m.lns))
 	for i := 0; i < len(m.lns); i++ {
 		go stdlistenerRun(m, m.lns[i], i)
+	}
+
+	m.connectwg.Add(len(m.connects))
+	for i := 0; i < len(m.connects); i++ {
+		connecting(m, m.connects[i])
 	}
 
 	atomic.StoreInt32(&m.started, 1)
@@ -179,8 +193,57 @@ func (m *NetworkModule) Listen(svcKey string, url string) error {
 	return nil
 }
 
-func (m *NetworkModule) Connect(key, url string, timeOut int) {
+func connecting(m *NetworkModule, c *connector) {
 
+	m.connectwg.Add(1)
+	go func() {
+		defer m.connectwg.Done()
+
+		conn, err := net.DialTimeout(c.network, c.addr, c.timeOut)
+		if err != nil {
+			m.evManager.OnConnectFailed(c.svcKey)
+			return
+		}
+
+		session := &clientSession{
+			conn:       conn,
+			svcKey:     c.svcKey,
+			localAddr:  conn.LocalAddr(),
+			remoteAddr: conn.RemoteAddr(),
+		}
+		session.eventHandler = m.evManager.CreateEventHandler(session)
+
+		m.clientMutex.Lock()
+		m.clientSessions = append(m.clientSessions, session)
+		m.clientMutex.Unlock()
+
+		var packet [0xFFFF]byte
+		for {
+			n, err := conn.Read(packet[:])
+			if err != nil {
+				conn.SetReadDeadline(time.Time{})
+				session.eventHandler.OnClosed(err)
+				return
+			}
+
+			var pak Packet.Packet
+			pak.FromBuff(packet[:n])
+			session.eventHandler.OnRecvPacket(&pak)
+		}
+	}()
+}
+
+func (m *NetworkModule) Connect(svcKey, url string, timeOut time.Duration) {
+	var c connector
+	c.svcKey = svcKey
+	c.timeOut = timeOut
+	c.network, c.addr, _, _ = parseAddr(url)
+
+	if atomic.LoadInt32(&m.started) == 1 {
+		connecting(m, &c)
+	} else {
+		m.connects = append(m.connects, &c)
+	}
 }
 
 // waitForShutdown waits for a signal to shutdown

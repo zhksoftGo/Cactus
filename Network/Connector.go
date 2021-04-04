@@ -7,7 +7,7 @@ import (
 
 type connector struct {
 	conn    net.Conn
-	lnaddr  net.Addr
+	svrAddr net.Addr
 	network string
 	addr    string
 	svcKey  string
