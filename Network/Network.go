@@ -9,8 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/zhksoftGo/Packet"
 )
 
 var errClosing = errors.New("closing")
@@ -206,10 +204,8 @@ func connecting(m *NetworkModule, c *connector) {
 		}
 
 		session := &clientSession{
-			conn:       conn,
-			svcKey:     c.svcKey,
-			localAddr:  conn.LocalAddr(),
-			remoteAddr: conn.RemoteAddr(),
+			conn:   conn,
+			svcKey: c.svcKey,
 		}
 		session.eventHandler = m.evManager.CreateEventHandler(session)
 
@@ -226,9 +222,7 @@ func connecting(m *NetworkModule, c *connector) {
 				return
 			}
 
-			var pak Packet.Packet
-			pak.FromBuff(packet[:n])
-			session.eventHandler.OnRecvPacket(&pak)
+			session.eventHandler.OnRecvMsg(packet[:n])
 		}
 	}()
 }
@@ -289,7 +283,6 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 					pconn:      ln.pconn,
 					svcKey:     ln.svcKey,
 					lnidx:      lnidx,
-					localAddr:  ln.lnaddr,
 					remoteAddr: addr,
 					in:         append([]byte{}, packet[:n]...),
 				}
@@ -309,12 +302,10 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
 			s := &tcpSession{
-				svcKey:     ln.svcKey,
-				conn:       conn,
-				loop:       l,
-				lnidx:      lnidx,
-				localAddr:  ln.lnaddr,
-				remoteAddr: conn.RemoteAddr(),
+				svcKey: ln.svcKey,
+				conn:   conn,
+				loop:   l,
+				lnidx:  lnidx,
 			}
 			s.eventHandler = m.evManager.CreateEventHandler(s)
 			l.ch <- s
@@ -449,9 +440,7 @@ func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) e
 		return nil
 	}
 
-	var pak Packet.Packet
-	pak.FromBuff(in)
-	action := session.eventHandler.OnRecvPacket(&pak)
+	action := session.eventHandler.OnRecvMsg(in)
 
 	switch action {
 	case Shutdown:
@@ -466,9 +455,7 @@ func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) e
 }
 
 func stdloopReadUDP(m *NetworkModule, l *stdloop, session *udpSession) error {
-	var pak Packet.Packet
-	pak.FromBuff(session.in)
-	action := session.eventHandler.OnRecvPacket(&pak)
+	action := session.eventHandler.OnRecvMsg(session.in)
 
 	switch action {
 	case Shutdown:

@@ -6,7 +6,6 @@ import (
 
 	"github.com/gookit/slog"
 	"github.com/zhksoftGo/Cactus/Network"
-	"github.com/zhksoftGo/Packet"
 )
 
 type EVHandlerGameServer struct {
@@ -21,7 +20,7 @@ func (ev EVHandlerGameServer) OnOpened() (opts Network.Options, action Network.A
 	return
 }
 
-func (ev EVHandlerGameServer) OnRecvPacket(pak *Packet.Packet) Network.Action {
+func (ev EVHandlerGameServer) OnRecvMsg(b []byte) Network.Action {
 	slog.Info("EVHandlerGameServer.OnRecvPacket")
 
 	return Network.None

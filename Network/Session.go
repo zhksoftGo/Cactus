@@ -2,24 +2,22 @@ package Network
 
 import (
 	"net"
-
-	"github.com/zhksoftGo/Packet"
 )
 
 type INetworkSession interface {
 	GetServiceKey() string
 
-	/// 发送Packet二进制格式消息(里面实际内容也可以是XML或JSON字符串), 原始数据含6字节网络头.
-	SendPacket(pak *Packet.Packet) error
+	/// 发送消息
+	SendMsg(b []byte) error
 
 	/// 关闭会话.
 	ShutDown(notify bool)
 
 	/// 获取对方IP地址和端口号.
-	GetRemoteAddress() net.Addr
+	GetRemoteAddr() net.Addr
 
 	/// 获取本地IP地址和端口号.
-	GetLocalAddress() net.Addr
+	GetLocalAddr() net.Addr
 
 	Wake()
 }
@@ -27,8 +25,6 @@ type INetworkSession interface {
 type tcpSession struct {
 	svcKey       string
 	eventHandler IEventHandler
-	localAddr    net.Addr
-	remoteAddr   net.Addr
 	conn         net.Conn // original connection
 	loop         *stdloop // owner loop
 	lnidx        int      // index of listener
@@ -41,14 +37,14 @@ type wakeReq struct {
 }
 
 func (s *tcpSession) GetServiceKey() string { return s.svcKey }
-func (s *tcpSession) SendPacket(pak *Packet.Packet) error {
-	_, err := s.conn.Write(pak.GetUsedBuffer())
+func (s *tcpSession) SendMsg(b []byte) error {
+	_, err := s.conn.Write(b)
 	return err
 }
-func (s *tcpSession) ShutDown(notify bool)       { s.conn.Close() }
-func (s *tcpSession) GetRemoteAddress() net.Addr { return s.localAddr }
-func (s *tcpSession) GetLocalAddress() net.Addr  { return s.remoteAddr }
-func (s *tcpSession) Wake()                      { s.loop.ch <- wakeReq{s} }
+func (s *tcpSession) ShutDown(notify bool)    { s.conn.Close() }
+func (s *tcpSession) GetRemoteAddr() net.Addr { return s.conn.LocalAddr() }
+func (s *tcpSession) GetLocalAddr() net.Addr  { return s.conn.RemoteAddr() }
+func (s *tcpSession) Wake()                   { s.loop.ch <- wakeReq{s} }
 
 type stdin struct {
 	c  *tcpSession
@@ -64,39 +60,36 @@ type udpSession struct {
 	svcKey       string
 	eventHandler IEventHandler
 	pconn        net.PacketConn
-	lnidx        int // index of listener
-	localAddr    net.Addr
 	remoteAddr   net.Addr
+	lnidx        int // index of listener
 	in           []byte
 }
 
 func (s *udpSession) GetServiceKey() string { return s.svcKey }
-func (s *udpSession) SendPacket(pak *Packet.Packet) error {
-	_, err := s.pconn.WriteTo(pak.GetUsedBuffer(), s.remoteAddr)
+func (s *udpSession) SendMsg(b []byte) error {
+	_, err := s.pconn.WriteTo(b, s.remoteAddr)
 	return err
 }
-func (s *udpSession) ShutDown(notify bool)       {}
-func (s *udpSession) GetRemoteAddress() net.Addr { return s.localAddr }
-func (s *udpSession) GetLocalAddress() net.Addr  { return s.remoteAddr }
-func (s *udpSession) Wake()                      {}
+func (s *udpSession) ShutDown(notify bool)    {}
+func (s *udpSession) GetRemoteAddr() net.Addr { return s.pconn.LocalAddr() }
+func (s *udpSession) GetLocalAddr() net.Addr  { return s.remoteAddr }
+func (s *udpSession) Wake()                   {}
 
 type clientSession struct {
 	svcKey       string
 	eventHandler IEventHandler
 	conn         net.Conn
-	localAddr    net.Addr
-	remoteAddr   net.Addr
 }
 
 func (s *clientSession) GetServiceKey() string { return s.svcKey }
-func (s *clientSession) SendPacket(pak *Packet.Packet) error {
-	_, err := s.conn.Write(pak.GetUsedBuffer())
+func (s *clientSession) SendMsg(b []byte) error {
+	_, err := s.conn.Write(b)
 	return err
 }
-func (s *clientSession) ShutDown(notify bool)       {}
-func (s *clientSession) GetRemoteAddress() net.Addr { return s.localAddr }
-func (s *clientSession) GetLocalAddress() net.Addr  { return s.remoteAddr }
-func (s *clientSession) Wake()                      {}
+func (s *clientSession) ShutDown(notify bool)    {}
+func (s *clientSession) GetRemoteAddr() net.Addr { return s.conn.LocalAddr() }
+func (s *clientSession) GetLocalAddr() net.Addr  { return s.conn.RemoteAddr() }
+func (s *clientSession) Wake()                   {}
 
 type stddetachedConn struct {
 	conn net.Conn // original conn

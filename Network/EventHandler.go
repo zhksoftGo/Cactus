@@ -3,8 +3,6 @@ package Network
 import (
 	"io"
 	"time"
-
-	"github.com/zhksoftGo/Packet"
 )
 
 type IEventHandler interface {
@@ -17,7 +15,7 @@ type IEventHandler interface {
 	OnOpened() (opts Options, action Action)
 
 	/// 收到对方发来的消息, 包含网络头. 里面具体数据可以是Packet/XML/JSON.
-	OnRecvPacket(pak *Packet.Packet) Action
+	OnRecvMsg(b []byte) Action
 
 	// OnClosed fires when a connection has closed.
 	// The err parameter is the last known connection error.
@@ -45,7 +43,7 @@ func (ev EventHandler) OnOpened() (opts Options, action Action) {
 	return
 }
 
-func (ev EventHandler) OnRecvPacket(pak *Packet.Packet) Action {
+func (ev EventHandler) OnRecvMsg(b []byte) Action {
 	return None
 }
 
