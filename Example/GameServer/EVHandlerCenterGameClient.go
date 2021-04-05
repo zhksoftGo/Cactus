@@ -21,7 +21,7 @@ func (ev EVHandlerCenterGameClient) OnOpened() (opts Network.Options, action Net
 }
 
 func (ev EVHandlerCenterGameClient) OnRecvMsg(b []byte) Network.Action {
-	slog.Info("EVHandlerCenterGameClient.OnRecvPacket")
+	slog.Info("EVHandlerCenterGameClient.OnRecvMsg")
 
 	return Network.None
 }

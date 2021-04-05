@@ -21,7 +21,7 @@ func (ev EVHandlerGMServer) OnOpened() (opts Network.Options, action Network.Act
 }
 
 func (ev EVHandlerGMServer) OnRecvMsg(b []byte) Network.Action {
-	slog.Info("EVHandlerGMServer.OnRecvPacket")
+	slog.Info("EVHandlerGMServer.OnRecvMsg")
 
 	return Network.None
 }
