@@ -1,6 +1,7 @@
 package Network
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -50,7 +51,7 @@ type NetworkModule struct {
 	cond           *sync.Cond     // shutdown signaler
 	serr           error          // signal error
 	accepted       uintptr        // accept counter
-	started        int32
+	status         int32          //0: init; 1: running; 2:shutting down; 3:shutdown
 }
 
 func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
@@ -72,10 +73,10 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 	var ferr error
 	defer func() {
-		atomic.StoreInt32(&m.started, 0)
-
 		// wait on a signal for shutdown
 		ferr = m.waitForShutdown()
+
+		atomic.StoreInt32(&m.status, 2)
 
 		// notify all loops to close by closing all listeners
 		for _, l := range m.loops {
@@ -103,6 +104,8 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 		}
 		m.clientMutex.Unlock()
 		m.connectwg.Wait()
+
+		atomic.StoreInt32(&m.status, 3)
 	}()
 
 	m.loopwg.Add(numLoops)
@@ -120,9 +123,14 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 		connecting(m, m.connects[i])
 	}
 
-	atomic.StoreInt32(&m.started, 1)
+	atomic.StoreInt32(&m.status, 1)
 
 	return ferr
+}
+
+func (m *NetworkModule) Shutdown(ctx context.Context) error {
+	m.signalShutdown(errClosing)
+	return nil
 }
 
 // Addresses should use a scheme prefix and be formatted
@@ -180,7 +188,7 @@ func (m *NetworkModule) Listen(svcKey string, url string) error {
 		}
 	}
 
-	if atomic.LoadInt32(&m.started) == 1 {
+	if atomic.LoadInt32(&m.status) == 1 {
 		l := m.loops[0]
 		ln := &newListener{ln: &ln}
 		l.ch <- ln
@@ -233,7 +241,7 @@ func (m *NetworkModule) Connect(svcKey, url string, timeOut time.Duration) {
 	c.timeOut = timeOut
 	c.network, c.addr, _, _ = parseAddr(url)
 
-	if atomic.LoadInt32(&m.started) == 1 {
+	if atomic.LoadInt32(&m.status) == 1 {
 		connecting(m, &c)
 	} else {
 		m.connects = append(m.connects, &c)
@@ -261,7 +269,11 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 	var ferr error
 
 	defer func() {
-		m.signalShutdown(ferr)
+
+		if ferr != nil {
+			m.signalShutdown(ferr)
+		}
+
 		m.lnwg.Done()
 	}()
 
@@ -333,7 +345,10 @@ func stdloopRun(m *NetworkModule, l *stdloop) {
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
 
-		m.signalShutdown(err)
+		if err == errClosing {
+			m.signalShutdown(errClosing)
+		}
+
 		m.loopwg.Done()
 		stdloopEgress(m, l)
 		m.loopwg.Done()
@@ -503,8 +518,8 @@ func stdloopAccept(m *NetworkModule, l *stdloop, session *tcpSession) error {
 func stdloopNewListener(m *NetworkModule, l *stdloop, ln *listener) error {
 
 	idx := len(m.lns)
-
 	m.lns = append(m.lns, ln)
+
 	m.lnwg.Add(1)
 	go stdlistenerRun(m, ln, idx)
 

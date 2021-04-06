@@ -36,7 +36,7 @@ func (evMngr EVHandlerManager) OnConnectFailed(svcKey string) {
 }
 
 func (evMngr EVHandlerManager) OnShutdown() {
-	slog.Info("EVHandlerManager")
+	slog.Info("OnShutdown")
 }
 
 func main() {
