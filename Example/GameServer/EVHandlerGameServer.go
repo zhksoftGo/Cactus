@@ -12,7 +12,7 @@ type EVHandlerGameServer struct {
 	Network.EventHandler
 }
 
-func (ev EVHandlerGameServer) OnOpened() (opts Network.Options, action Network.Action) {
+func (ev *EVHandlerGameServer) OnOpened() (opts Network.Options, action Network.Action) {
 	slog.Info("EVHandlerGameServer.OnOpened")
 
 	opts = Network.Options{TCPKeepAlive: time.Minute, ReuseInputBuffer: true}
@@ -20,20 +20,20 @@ func (ev EVHandlerGameServer) OnOpened() (opts Network.Options, action Network.A
 	return
 }
 
-func (ev EVHandlerGameServer) OnRecvMsg(b []byte) Network.Action {
+func (ev *EVHandlerGameServer) OnRecvMsg(b []byte) Network.Action {
 	slog.Info("EVHandlerGameServer.OnRecvMsg")
 
 	return Network.None
 }
 
-func (ev EVHandlerGameServer) OnClosed(err error) (action Network.Action) {
+func (ev *EVHandlerGameServer) OnClosed(err error) (action Network.Action) {
 	slog.Info("EVHandlerGameServer.OnClosed")
 
 	action = Network.None
 	return
 }
 
-func (ev EVHandlerGameServer) OnDetached(rwc io.ReadWriteCloser) (action Network.Action) {
+func (ev *EVHandlerGameServer) OnDetached(rwc io.ReadWriteCloser) (action Network.Action) {
 	slog.Info("EVHandlerGameServer.OnDetached")
 
 	rwc.Close()

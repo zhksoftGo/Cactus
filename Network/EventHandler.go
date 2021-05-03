@@ -36,23 +36,23 @@ type EventHandler struct {
 	ready   bool
 }
 
-func (ev EventHandler) OnOpened() (opts Options, action Action) {
+func (ev *EventHandler) OnOpened() (opts Options, action Action) {
 	ev.ready = true
 	opts = Options{time.Minute, true}
 	action = None
 	return
 }
 
-func (ev EventHandler) OnRecvMsg(b []byte) Action {
+func (ev *EventHandler) OnRecvMsg(b []byte) Action {
 	return None
 }
 
-func (ev EventHandler) OnClosed(err error) (action Action) {
+func (ev *EventHandler) OnClosed(err error) (action Action) {
 	action = None
 	return
 }
 
-func (ev EventHandler) OnDetached(rwc io.ReadWriteCloser) (action Action) {
+func (ev *EventHandler) OnDetached(rwc io.ReadWriteCloser) (action Action) {
 	rwc.Close()
 	action = None
 	return
@@ -81,15 +81,16 @@ type IEventHandlerManager interface {
 type EventHandlerManager struct {
 }
 
-func (evMngr EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
-	ev := EventHandler{Session: session}
+func (evMngr *EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
+	ev := new(EventHandler)
+	ev.Session = session
 	return ev
 }
 
-func (evMngr EventHandlerManager) OnConnectFailed(svcKey string) {
+func (evMngr *EventHandlerManager) OnConnectFailed(svcKey string) {
 
 }
 
-func (evMngr EventHandlerManager) OnShutdown() {
+func (evMngr *EventHandlerManager) OnShutdown() {
 
 }

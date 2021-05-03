@@ -11,18 +11,18 @@ type EVHandlerManager struct {
 	Network.EventHandlerManager
 }
 
-func (evMngr EVHandlerManager) CreateEventHandler(session Network.INetworkSession) Network.IEventHandler {
+func (evMngr *EVHandlerManager) CreateEventHandler(session Network.INetworkSession) Network.IEventHandler {
 
 	switch session.GetServiceKey() {
 	case "GMServer":
 		slog.Info("CreateEventHandler: GMServer")
-		ev := EVHandlerGMServer{}
+		ev := new(EVHandlerGMServer)
 		ev.Session = session
 		return ev
 
 	case "CenterGameServer":
 		slog.Info("CreateEventHandler: CenterGameServer")
-		ev := EVHandlerCenterGameServer{}
+		ev := new(EVHandlerCenterGameServer)
 		ev.Session = session
 		return ev
 	}
@@ -30,7 +30,11 @@ func (evMngr EVHandlerManager) CreateEventHandler(session Network.INetworkSessio
 	return nil
 }
 
-func (evMngr EVHandlerManager) OnShutdown() {
+func (evMngr *EVHandlerManager) OnConnectFailed(svcKey string) {
+	slog.Error("OnConnectFailed:", svcKey)
+}
+
+func (evMngr *EVHandlerManager) OnShutdown() {
 	slog.Info("OnShutdown")
 }
 
@@ -45,7 +49,7 @@ func main() {
 	wg.Add(1)
 
 	var module Network.NetworkModule
-	var manager EVHandlerManager
+	manager := new(EVHandlerManager)
 
 	go func() {
 		defer wg.Done()
