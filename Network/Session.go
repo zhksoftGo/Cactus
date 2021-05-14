@@ -7,6 +7,8 @@ import (
 type INetworkSession interface {
 	GetServiceKey() string
 
+	GetSessionID() uint64
+
 	/// 发送消息
 	SendMsg(b []byte) error
 
@@ -22,8 +24,11 @@ type INetworkSession interface {
 	Wake()
 }
 
+var tcpSessionID uint64
+
 type tcpSession struct {
 	svcKey       string
+	sessionID    uint64
 	eventHandler IEventHandler
 	conn         net.Conn // original connection
 	loop         *stdloop // owner loop
@@ -37,6 +42,7 @@ type wakeReq struct {
 }
 
 func (s *tcpSession) GetServiceKey() string { return s.svcKey }
+func (s *tcpSession) GetSessionID() uint64  { return s.sessionID }
 func (s *tcpSession) SendMsg(b []byte) error {
 	_, err := s.conn.Write(b)
 	return err
@@ -56,8 +62,11 @@ type stderr struct {
 	err error
 }
 
+var udpSessionID uint64
+
 type udpSession struct {
 	svcKey       string
+	sessionID    uint64
 	eventHandler IEventHandler
 	pconn        net.PacketConn
 	remoteAddr   net.Addr
@@ -66,6 +75,7 @@ type udpSession struct {
 }
 
 func (s *udpSession) GetServiceKey() string { return s.svcKey }
+func (s *udpSession) GetSessionID() uint64  { return s.sessionID }
 func (s *udpSession) SendMsg(b []byte) error {
 	_, err := s.pconn.WriteTo(b, s.remoteAddr)
 	return err
@@ -77,11 +87,15 @@ func (s *udpSession) Wake()                   {}
 
 type clientSession struct {
 	svcKey       string
+	sessionID    uint64
 	eventHandler IEventHandler
 	conn         net.Conn
 }
 
+var clientSessionID uint64
+
 func (s *clientSession) GetServiceKey() string { return s.svcKey }
+func (s *clientSession) GetSessionID() uint64  { return s.sessionID }
 func (s *clientSession) SendMsg(b []byte) error {
 	_, err := s.conn.Write(b)
 	return err

@@ -212,8 +212,9 @@ func connecting(m *NetworkModule, c *connector) {
 		}
 
 		session := &clientSession{
-			conn:   conn,
-			svcKey: c.svcKey,
+			conn:      conn,
+			svcKey:    c.svcKey,
+			sessionID: atomic.AddUint64(&clientSessionID, 1),
 		}
 		session.eventHandler = m.evManager.CreateEventHandler(session)
 
@@ -294,6 +295,7 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 				s = &udpSession{
 					pconn:      ln.pconn,
 					svcKey:     ln.svcKey,
+					sessionID:  atomic.AddUint64(&udpSessionID, 1),
 					lnidx:      lnidx,
 					remoteAddr: addr,
 					in:         append([]byte{}, packet[:n]...),
@@ -314,10 +316,11 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
 			s := &tcpSession{
-				svcKey: ln.svcKey,
-				conn:   conn,
-				loop:   l,
-				lnidx:  lnidx,
+				svcKey:    ln.svcKey,
+				sessionID: atomic.AddUint64(&tcpSessionID, 1),
+				conn:      conn,
+				loop:      l,
+				lnidx:     lnidx,
 			}
 			s.eventHandler = m.evManager.CreateEventHandler(s)
 			l.ch <- s
