@@ -13,7 +13,7 @@ type INetworkSession interface {
 	SendMsg(b []byte) error
 
 	/// 关闭会话.
-	ShutDown(notify bool)
+	Shutdown(notify bool)
 
 	/// 获取对方IP地址和端口号.
 	GetRemoteAddr() net.Addr
@@ -47,7 +47,7 @@ func (s *tcpSession) SendMsg(b []byte) error {
 	_, err := s.conn.Write(b)
 	return err
 }
-func (s *tcpSession) ShutDown(notify bool)    { s.conn.Close() }
+func (s *tcpSession) Shutdown(notify bool)    { s.conn.Close() }
 func (s *tcpSession) GetRemoteAddr() net.Addr { return s.conn.LocalAddr() }
 func (s *tcpSession) GetLocalAddr() net.Addr  { return s.conn.RemoteAddr() }
 func (s *tcpSession) Wake()                   { s.loop.ch <- wakeReq{s} }
@@ -80,7 +80,7 @@ func (s *udpSession) SendMsg(b []byte) error {
 	_, err := s.pconn.WriteTo(b, s.remoteAddr)
 	return err
 }
-func (s *udpSession) ShutDown(notify bool)    {}
+func (s *udpSession) Shutdown(notify bool)    {}
 func (s *udpSession) GetRemoteAddr() net.Addr { return s.pconn.LocalAddr() }
 func (s *udpSession) GetLocalAddr() net.Addr  { return s.remoteAddr }
 func (s *udpSession) Wake()                   {}
@@ -100,7 +100,7 @@ func (s *clientSession) SendMsg(b []byte) error {
 	_, err := s.conn.Write(b)
 	return err
 }
-func (s *clientSession) ShutDown(notify bool)    {}
+func (s *clientSession) Shutdown(notify bool)    {}
 func (s *clientSession) GetRemoteAddr() net.Addr { return s.conn.LocalAddr() }
 func (s *clientSession) GetLocalAddr() net.Addr  { return s.conn.RemoteAddr() }
 func (s *clientSession) Wake()                   {}

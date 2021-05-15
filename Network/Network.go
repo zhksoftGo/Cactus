@@ -197,7 +197,6 @@ func (m *NetworkModule) Listen(svcKey string, url string) error {
 
 func connecting(m *NetworkModule, c *connector) {
 
-	m.connectwg.Add(1)
 	go func() {
 		defer m.connectwg.Done()
 
@@ -213,6 +212,13 @@ func connecting(m *NetworkModule, c *connector) {
 			sessionID: atomic.AddUint64(&clientSessionID, 1),
 		}
 		session.eventHandler = m.evManager.CreateEventHandler(session)
+		opts, _ := session.eventHandler.OnOpened()
+		if opts.TCPKeepAlive > 0 {
+			if conn, ok := session.conn.(*net.TCPConn); ok {
+				conn.SetKeepAlive(true)
+				conn.SetKeepAlivePeriod(opts.TCPKeepAlive)
+			}
+		}
 
 		m.clientMutex.Lock()
 		m.clientSessions = append(m.clientSessions, session)
