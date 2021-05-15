@@ -1,7 +1,6 @@
 package Network
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net"
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-var errClosing = errors.New("closing")
+var errShutdown = errors.New("network module is closing")
 var errCloseConns = errors.New("close conns")
 
 // Action is an action that occurs after the completion of an event.
@@ -27,9 +26,6 @@ const (
 
 	// Close closes the connection.
 	Close
-
-	// Shutdown shutdowns the server.
-	Shutdown
 )
 
 type stdloop struct {
@@ -80,7 +76,7 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 		// notify all loops to close by closing all listeners
 		for _, l := range m.loops {
-			l.ch <- errClosing
+			l.ch <- errShutdown
 		}
 		m.loopwg.Wait()
 
@@ -110,12 +106,12 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 	m.loopwg.Add(numLoops)
 	for i := 0; i < numLoops; i++ {
-		go stdloopRun(m, m.loops[i])
+		go stdLoopRun(m, m.loops[i])
 	}
 
 	m.lnwg.Add(len(m.lns))
 	for i := 0; i < len(m.lns); i++ {
-		go stdlistenerRun(m, m.lns[i], i)
+		go stdListenerRun(m, m.lns[i], i)
 	}
 
 	m.connectwg.Add(len(m.connects))
@@ -128,8 +124,8 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 	return ferr
 }
 
-func (m *NetworkModule) Shutdown(ctx context.Context) error {
-	m.signalShutdown(errClosing)
+func (m *NetworkModule) Shutdown() error {
+	m.signalShutdown(errShutdown)
 	return nil
 }
 
@@ -252,8 +248,10 @@ func (m *NetworkModule) Connect(svcKey, url string, timeOut time.Duration) {
 // waitForShutdown waits for a signal to shutdown
 func (m *NetworkModule) waitForShutdown() error {
 	m.cond.L.Lock()
+
 	m.cond.Wait()
 	err := m.serr
+
 	m.cond.L.Unlock()
 	return err
 }
@@ -261,12 +259,14 @@ func (m *NetworkModule) waitForShutdown() error {
 // signalShutdown signals a shutdown an begins server closing
 func (m *NetworkModule) signalShutdown(err error) {
 	m.cond.L.Lock()
+
 	m.serr = err
 	m.cond.Signal()
+
 	m.cond.L.Unlock()
 }
 
-func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
+func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 	var ferr error
 
 	defer func() {
@@ -342,15 +342,11 @@ func stdlistenerRun(m *NetworkModule, ln *listener, lnidx int) {
 	}
 }
 
-func stdloopRun(m *NetworkModule, l *stdloop) {
+func stdLoopRun(m *NetworkModule, l *stdloop) {
 	var err error
 
 	defer func() {
 		//fmt.Println("-- loop stopped --", l.idx)
-
-		if err == errClosing {
-			m.signalShutdown(errClosing)
-		}
 
 		m.loopwg.Done()
 		stdloopEgress(m, l)
@@ -435,17 +431,11 @@ func stdloopError(m *NetworkModule, l *stdloop, session *tcpSession, err error) 
 	case 2: // detached
 		err = nil
 		closeEvent = false
-		switch session.eventHandler.OnDetached(&stddetachedConn{session.conn, session.donein}) {
-		case Shutdown:
-			return errClosing
-		}
+		session.eventHandler.OnDetached(&stddetachedConn{session.conn, session.donein})
 	}
 
 	if closeEvent {
-		switch session.eventHandler.OnClosed(err) {
-		case Shutdown:
-			return errClosing
-		}
+		session.eventHandler.OnClosed(err)
 	}
 
 	return nil
@@ -461,8 +451,6 @@ func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) e
 	action := session.eventHandler.OnRecvMsg(in)
 
 	switch action {
-	case Shutdown:
-		return errClosing
 	case Detach:
 		return stdloopDetach(m, l, session)
 	case Close:
@@ -473,12 +461,7 @@ func stdloopRead(m *NetworkModule, l *stdloop, session *tcpSession, in []byte) e
 }
 
 func stdloopReadUDP(m *NetworkModule, l *stdloop, session *udpSession) error {
-	action := session.eventHandler.OnRecvMsg(session.in)
-
-	switch action {
-	case Shutdown:
-		return errClosing
-	}
+	session.eventHandler.OnRecvMsg(session.in)
 
 	return nil
 }
@@ -507,8 +490,6 @@ func stdloopAccept(m *NetworkModule, l *stdloop, session *tcpSession) error {
 	}
 
 	switch action {
-	case Shutdown:
-		return errClosing
 	case Detach:
 		return stdloopDetach(m, l, session)
 	case Close:
@@ -524,7 +505,7 @@ func stdloopNewListener(m *NetworkModule, l *stdloop, ln *listener) error {
 	m.lns = append(m.lns, ln)
 
 	m.lnwg.Add(1)
-	go stdlistenerRun(m, ln, idx)
+	go stdListenerRun(m, ln, idx)
 
 	return nil
 }

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gookit/slog"
@@ -32,7 +35,7 @@ func (evMngr *EVHandlerManager) CreateEventHandler(session Network.INetworkSessi
 }
 
 func (evMngr *EVHandlerManager) OnConnectFailed(svcKey string) {
-	slog.Info("OnConnectFailed:", svcKey)
+	slog.Error("OnConnectFailed:", svcKey)
 }
 
 func (evMngr *EVHandlerManager) OnShutdown() {
@@ -53,11 +56,28 @@ func main() {
 	manager := new(EVHandlerManager)
 
 	go func() {
-		defer wg.Done()
+		slog.Info("Network starting")
+		defer func() {
+			slog.Info("Network end")
+			wg.Done()
+		}()
 
 		module.Listen("GameServer", "tcp://:9091")
 		module.Connect("CenterGameClient", "tcp://:9082", 10*time.Second)
 		module.Run(manager, 0)
+	}()
+
+	c := make(chan os.Signal)
+	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		for sig := range c {
+			switch sig {
+			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+				slog.Info("Exit with:", sig)
+				module.Shutdown()
+				return
+			}
+		}
 	}()
 
 	wg.Wait()

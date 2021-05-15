@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/gookit/slog"
 	"github.com/zhksoftGo/Cactus/Network"
@@ -52,11 +55,28 @@ func main() {
 	manager := new(EVHandlerManager)
 
 	go func() {
-		defer wg.Done()
+		slog.Info("Network starting")
+		defer func() {
+			slog.Info("Network end")
+			wg.Done()
+		}()
 
 		module.Listen("GMServer", "tcp://:9081")
 		module.Listen("CenterGameServer", "tcp://:9082")
 		module.Run(manager, 0)
+	}()
+
+	c := make(chan os.Signal)
+	signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		for sig := range c {
+			switch sig {
+			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+				slog.Info("Exit with:", sig)
+				module.Shutdown()
+				return
+			}
+		}
 	}()
 
 	wg.Wait()
