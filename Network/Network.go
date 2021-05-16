@@ -363,6 +363,7 @@ func stdLoopRun(m *NetworkModule, l *stdloop) {
 	for {
 		select {
 		default:
+			time.Sleep(time.Millisecond)
 		case v := <-l.ch:
 			switch v := v.(type) {
 			case error:
