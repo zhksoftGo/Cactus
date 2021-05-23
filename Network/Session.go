@@ -24,8 +24,9 @@ type INetworkSession interface {
 	Wake()
 }
 
-var tcpSessionID uint64
+var allSessionID uint64
 
+//----------------------------------------------------------------------------
 type tcpSession struct {
 	svcKey       string
 	sessionID    uint64
@@ -62,8 +63,7 @@ type stderr struct {
 	err error
 }
 
-var udpSessionID uint64
-
+//----------------------------------------------------------------------------
 type udpSession struct {
 	svcKey       string
 	sessionID    uint64
@@ -85,14 +85,13 @@ func (s *udpSession) GetRemoteAddr() net.Addr { return s.pconn.LocalAddr() }
 func (s *udpSession) GetLocalAddr() net.Addr  { return s.remoteAddr }
 func (s *udpSession) Wake()                   {}
 
+//----------------------------------------------------------------------------
 type clientSession struct {
 	svcKey       string
 	sessionID    uint64
 	eventHandler IEventHandler
 	conn         net.Conn
 }
-
-var clientSessionID uint64
 
 func (s *clientSession) GetServiceKey() string { return s.svcKey }
 func (s *clientSession) GetSessionID() uint64  { return s.sessionID }
@@ -105,6 +104,7 @@ func (s *clientSession) GetRemoteAddr() net.Addr { return s.conn.LocalAddr() }
 func (s *clientSession) GetLocalAddr() net.Addr  { return s.conn.RemoteAddr() }
 func (s *clientSession) Wake()                   {}
 
+//----------------------------------------------------------------------------
 type stddetachedConn struct {
 	conn net.Conn // original conn
 	in   []byte   // extra input data

@@ -82,9 +82,7 @@ type EventHandlerManager struct {
 }
 
 func (evMngr *EventHandlerManager) CreateEventHandler(session INetworkSession) IEventHandler {
-	ev := new(EventHandler)
-	ev.Session = session
-	return ev
+	panic("CreateEventHandler: You must implement this function")
 }
 
 func (evMngr *EventHandlerManager) OnConnectFailed(svcKey string) {
