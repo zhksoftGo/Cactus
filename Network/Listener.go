@@ -32,10 +32,6 @@ func (ln *listener) close() {
 	}
 }
 
-func (ln *listener) system() error {
-	return nil
-}
-
 func reuseportListenPacket(proto, addr string) (l net.PacketConn, err error) {
 	return nil, errors.New("reuseport is not available")
 }
@@ -48,8 +44,8 @@ type addrOpts struct {
 	reusePort bool
 }
 
-//"tcp-net://localhost:5000?reuseport=1"
-func parseAddr(addr string) (network, address string, opts addrOpts, stdlib bool) {
+//"tcp://localhost:5000?reuseport=1" -> tcp, localhost:5000, true
+func parseAddr(addr string) (network, address string, opts addrOpts) {
 	network = "tcp"
 	address = addr
 	opts.reusePort = false
@@ -57,11 +53,6 @@ func parseAddr(addr string) (network, address string, opts addrOpts, stdlib bool
 	if strings.Contains(address, "://") {
 		network = strings.Split(address, "://")[0]
 		address = strings.Split(address, "://")[1]
-	}
-
-	if strings.HasSuffix(network, "-net") {
-		stdlib = true
-		network = network[:len(network)-4]
 	}
 
 	q := strings.Index(address, "?")

@@ -28,6 +28,17 @@ const (
 	Close
 )
 
+type ServerInfo struct {
+	Key     string
+	Network string
+	// IP:Port
+	Address   string
+	IsServer  bool
+	ReusePort bool
+	//Valid client IP range, for a server. example: "192.168.1.0/24"
+	IPRange string
+}
+
 type stdloop struct {
 	idx   int                  // loop index
 	ch    chan interface{}     // command channel
@@ -35,19 +46,50 @@ type stdloop struct {
 }
 
 type NetworkModule struct {
-	evManager      IEventHandlerManager
-	loops          []*stdloop       // all the loops
-	lns            []*listener      // all the listeners
-	connects       []*connector     // all the connectors
-	clientSessions []*clientSession // all the clients
-	clientMutex    sync.Mutex
-	loopwg         sync.WaitGroup // loop close waitgroup
-	lnwg           sync.WaitGroup // listener close waitgroup
-	connectwg      sync.WaitGroup // connector close waitgroup
-	cond           *sync.Cond     // shutdown signaler
-	serr           error          // signal error
-	accepted       uintptr        // accept counter
-	status         int32          //0: init; 1: running; 2:shutting down; 3:shutdown
+	evManager       IEventHandlerManager
+	loops           []*stdloop       // all the loops
+	lns             []*listener      // all the listeners
+	connects        []*connector     // all the connectors
+	clientSessions  []*clientSession // all the clients
+	clientMutex     sync.Mutex
+	loopwg          sync.WaitGroup // loop close waitgroup
+	lnwg            sync.WaitGroup // listener close waitgroup
+	connectwg       sync.WaitGroup // connector close waitgroup
+	cond            *sync.Cond     // shutdown signaler
+	serr            error          // signal error
+	accepted        uintptr        // accept counter
+	status          int32          //0: init; 1: running; 2:shutting down; 3:shutdown
+	severInfoes     map[string]*ServerInfo
+	serverInfoMutex sync.Mutex
+}
+
+func NewNetworkModule() *NetworkModule {
+	return &NetworkModule{severInfoes: make(map[string]*ServerInfo)}
+}
+
+func (m *NetworkModule) AddServerInfo(info *ServerInfo) error {
+	m.serverInfoMutex.Lock()
+	defer m.serverInfoMutex.Unlock()
+
+	_, ok := m.severInfoes[info.Key]
+	if !ok {
+		m.severInfoes[info.Key] = info
+		return nil
+	}
+
+	return errors.New("ServerInfo already exist")
+}
+
+func (m *NetworkModule) GetServerInfo(svcKey string) *ServerInfo {
+	m.serverInfoMutex.Lock()
+	defer m.serverInfoMutex.Unlock()
+
+	info, ok := m.severInfoes[svcKey]
+	if !ok {
+		return nil
+	}
+
+	return info
 }
 
 func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
@@ -131,6 +173,7 @@ func (m *NetworkModule) Shutdown() error {
 
 // Addresses should use a scheme prefix and be formatted
 // like `tcp://192.168.0.10:9851` or `unix://socket`.
+//		`tcp://localhost:5000?reuseport=1`
 // Valid network schemes:
 //  tcp   - bind to both IPv4 and IPv6
 //  tcp4  - IPv4
@@ -140,14 +183,39 @@ func (m *NetworkModule) Shutdown() error {
 //  udp6  - IPv6
 //  unix  - Unix Domain Socket
 // The "tcp" network scheme is assumed when one is not specified.
+
 func (m *NetworkModule) Listen(svcKey string, url string) error {
 
-	var stdlib bool
+	network, addr, opts := parseAddr(url)
+
+	svcInfo := &ServerInfo{
+		Key:       svcKey,
+		Network:   network,
+		Address:   addr,
+		IsServer:  false,
+		ReusePort: opts.reusePort}
+
+	err := m.AddServerInfo(svcInfo)
+	if err != nil {
+		return err
+	}
+
+	return m.ListenSvc(svcKey)
+}
+
+func (m *NetworkModule) ListenSvc(svcKey string) error {
+
+	svcInfo := m.GetServerInfo(svcKey)
+	if svcInfo == nil {
+		return errors.New("service not exist")
+	}
 
 	var ln listener
 	ln.svcKey = svcKey
+	ln.network = svcInfo.Network
+	ln.addr = svcInfo.Address
+	ln.opts.reusePort = svcInfo.ReusePort
 
-	ln.network, ln.addr, ln.opts, stdlib = parseAddr(url)
 	if ln.network == "unix" {
 		os.RemoveAll(ln.addr)
 	}
@@ -176,12 +244,6 @@ func (m *NetworkModule) Listen(svcKey string, url string) error {
 		ln.lnaddr = ln.pconn.LocalAddr()
 	} else {
 		ln.lnaddr = ln.ln.Addr()
-	}
-
-	if !stdlib {
-		if err := ln.system(); err != nil {
-			return err
-		}
 	}
 
 	if atomic.LoadInt32(&m.status) == 1 {
@@ -238,17 +300,45 @@ func connecting(m *NetworkModule, c *connector) {
 	}()
 }
 
-func (m *NetworkModule) Connect(svcKey, url string, timeOut time.Duration) {
+func (m *NetworkModule) Connect(svcKey, url string, timeOut time.Duration) error {
+
+	network, addr, opts := parseAddr(url)
+
+	svcInfo := &ServerInfo{
+		Key:       svcKey,
+		Network:   network,
+		Address:   addr,
+		IsServer:  false,
+		ReusePort: opts.reusePort}
+
+	err := m.AddServerInfo(svcInfo)
+	if err != nil {
+		return err
+	}
+
+	return m.ConnectSvc(svcKey, timeOut)
+}
+
+func (m *NetworkModule) ConnectSvc(svcKey string, timeOut time.Duration) error {
+
+	svcInfo := m.GetServerInfo(svcKey)
+	if svcInfo == nil {
+		return errors.New("service not exist")
+	}
+
 	var c connector
-	c.svcKey = svcKey
+	c.svcKey = svcInfo.Key
 	c.timeOut = timeOut
-	c.network, c.addr, _, _ = parseAddr(url)
+	c.network = svcInfo.Network
+	c.addr = svcInfo.Address
 
 	if atomic.LoadInt32(&m.status) == 1 {
 		connecting(m, &c)
 	} else {
 		m.connects = append(m.connects, &c)
 	}
+
+	return nil
 }
 
 // waitForShutdown waits for a signal to shutdown
