@@ -92,6 +92,21 @@ func (m *NetworkModule) GetServerInfo(svcKey string) *ServerInfo {
 	return info
 }
 
+func (m *NetworkModule) IsClientIPInRange(svcKey, clientip string) bool {
+	svcInfo := m.GetServerInfo(svcKey)
+	if svcInfo == nil {
+		return false
+	}
+
+	if len(svcInfo.IPRange) == 0 {
+		return true
+	}
+
+	_, subnet, _ := net.ParseCIDR(svcInfo.IPRange)
+	ip := net.ParseIP(clientip)
+	return subnet.Contains(ip)
+}
+
 func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 
 	m.evManager = evMngr
@@ -384,6 +399,10 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 				return
 			}
 
+			if !m.IsClientIPInRange(ln.svcKey, addr.String()) {
+				continue
+			}
+
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
 
 			s, ok := ln.udpSessions[addr]
@@ -408,6 +427,11 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 			if err != nil {
 				ferr = err
 				return
+			}
+
+			if !m.IsClientIPInRange(ln.svcKey, conn.RemoteAddr().String()) {
+				conn.Close()
+				continue
 			}
 
 			l := m.loops[int(atomic.AddUintptr(&m.accepted, 1))%len(m.loops)]
