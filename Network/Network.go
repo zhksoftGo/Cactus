@@ -2,6 +2,7 @@ package Network
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -400,6 +401,7 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 			}
 
 			if !m.IsClientIPInRange(ln.svcKey, addr.String()) {
+				fmt.Println("client ip is not in range:", ln.svcKey, addr.String())
 				continue
 			}
 
@@ -430,6 +432,7 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 			}
 
 			if !m.IsClientIPInRange(ln.svcKey, conn.RemoteAddr().String()) {
+				fmt.Println("client ip is not in range:", ln.svcKey, conn.RemoteAddr().String())
 				conn.Close()
 				continue
 			}
