@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -400,8 +401,12 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 				return
 			}
 
-			if !m.IsClientIPInRange(ln.svcKey, addr.String()) {
-				fmt.Println("client ip is not in range:", ln.svcKey, addr.String())
+			ip := addr.String()
+			if strings.Contains(ip, ":") {
+				ip = strings.Split(ip, ":")[0]
+			}
+			if !m.IsClientIPInRange(ln.svcKey, ip) {
+				fmt.Println("client ip is not in range:", ln.svcKey, ip)
 				continue
 			}
 
@@ -431,8 +436,12 @@ func stdListenerRun(m *NetworkModule, ln *listener, lnidx int) {
 				return
 			}
 
-			if !m.IsClientIPInRange(ln.svcKey, conn.RemoteAddr().String()) {
-				fmt.Println("client ip is not in range:", ln.svcKey, conn.RemoteAddr().String())
+			ip := conn.RemoteAddr().String()
+			if strings.Contains(ip, ":") {
+				ip = strings.Split(ip, ":")[0]
+			}
+			if !m.IsClientIPInRange(ln.svcKey, ip) {
+				fmt.Println("client ip is not in range:", ln.svcKey, ip)
 				conn.Close()
 				continue
 			}
