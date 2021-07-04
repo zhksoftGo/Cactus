@@ -104,9 +104,28 @@ func (m *NetworkModule) IsClientIPInRange(svcKey, clientip string) bool {
 		return true
 	}
 
-	_, subnet, _ := net.ParseCIDR(svcInfo.IPRange)
-	ip := net.ParseIP(clientip)
-	return subnet.Contains(ip)
+	if strings.Contains(svcInfo.IPRange, ";") {
+		ipRanges := strings.Split(svcInfo.IPRange, ";")
+		for _, item := range ipRanges {
+			_, subnet, err := net.ParseCIDR(item)
+			if err != nil {
+				return false
+			}
+			ip := net.ParseIP(clientip)
+			if subnet.Contains(ip) {
+				return true
+			}
+		}
+		return false
+
+	} else {
+		_, subnet, err := net.ParseCIDR(svcInfo.IPRange)
+		if err != nil {
+			return false
+		}
+		ip := net.ParseIP(clientip)
+		return subnet.Contains(ip)
+	}
 }
 
 func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
