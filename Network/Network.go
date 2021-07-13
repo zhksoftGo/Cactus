@@ -192,7 +192,6 @@ func (m *NetworkModule) Run(evMngr IEventHandlerManager, numLoops int) error {
 		go stdListenerRun(m, m.lns[i], i)
 	}
 
-	m.connectwg.Add(len(m.connects))
 	for i := 0; i < len(m.connects); i++ {
 		connecting(m, m.connects[i])
 	}
@@ -294,6 +293,8 @@ func (m *NetworkModule) ListenSvc(svcKey string) error {
 }
 
 func connecting(m *NetworkModule, c *connector) {
+
+	m.connectwg.Add(1)
 
 	go func() {
 		defer m.connectwg.Done()
