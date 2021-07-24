@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -11,38 +12,11 @@ import (
 	"github.com/zhksoftGo/Cactus/Network"
 )
 
-type EVHandlerManager struct {
-	Network.EventHandlerManager
-}
-
-func (evMngr *EVHandlerManager) CreateEventHandler(session Network.INetworkSession) Network.IEventHandler {
-
-	switch session.GetServiceKey() {
-	case "GameServer":
-		slog.Info("CreateEventHandler: GameServer")
-		ev := new(EVHandlerGameServer)
-		ev.Session = session
-		return ev
-
-	case "CenterGameClient":
-		slog.Info("CreateEventHandler: CenterGameClient")
-		ev := new(EVHandlerCenterGameClient)
-		ev.Session = session
-		return ev
-	}
-
-	return nil
-}
-
-func (evMngr *EVHandlerManager) OnConnectFailed(svcKey string) {
-	slog.Error("OnConnectFailed:", svcKey)
-}
-
-func (evMngr *EVHandlerManager) OnShutdown() {
-	slog.Info("OnShutdown")
-}
+var NetworkModule *Network.NetworkModule
 
 func main() {
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	slog.Configure(func(logger *slog.SugaredLogger) {
 		f := logger.Formatter.(*slog.TextFormatter)
@@ -52,8 +26,10 @@ func main() {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	var module Network.NetworkModule
-	manager := new(EVHandlerManager)
+	NetworkModule = Network.NewNetworkModule()
+
+	SessionMgr = CreateSessionManager()
+	go SessionMgr.Update(ctx, 33, SessionMgr.OnUpdate)
 
 	go func() {
 		slog.Info("Network starting")
@@ -62,9 +38,9 @@ func main() {
 			wg.Done()
 		}()
 
-		module.Listen("GameServer", "tcp://:9091")
-		module.Connect("CenterGameClient", "tcp://:9082", 10*time.Second)
-		module.Run(manager, 0)
+		NetworkModule.Listen("GameServer", "tcp://:9091")
+		NetworkModule.Connect("CenterGameClient", "tcp://:9082", 10*time.Second)
+		NetworkModule.Run(SessionMgr, 0)
 	}()
 
 	c := make(chan os.Signal)
@@ -74,12 +50,17 @@ func main() {
 			switch sig {
 			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
 				slog.Info("Exit with:", sig)
-				module.Shutdown()
+
+				cancel()
+
+				slog.Info("SessionMgr shutdown")
+				SessionMgr.Running = false
+				NetworkModule.Shutdown()
 				return
 			}
 		}
 	}()
 
 	wg.Wait()
-	slog.Info("end...")
+	slog.Info("GameServer end")
 }

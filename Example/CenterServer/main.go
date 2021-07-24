@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"sync"
@@ -10,38 +11,11 @@ import (
 	"github.com/zhksoftGo/Cactus/Network"
 )
 
-type EVHandlerManager struct {
-	Network.EventHandlerManager
-}
-
-func (evMngr *EVHandlerManager) CreateEventHandler(session Network.INetworkSession) Network.IEventHandler {
-
-	switch session.GetServiceKey() {
-	case "GMServer":
-		slog.Info("CreateEventHandler: GMServer")
-		ev := new(EVHandlerGMServer)
-		ev.Session = session
-		return ev
-
-	case "CenterGameServer":
-		slog.Info("CreateEventHandler: CenterGameServer")
-		ev := new(EVHandlerCenterGameServer)
-		ev.Session = session
-		return ev
-	}
-
-	return nil
-}
-
-func (evMngr *EVHandlerManager) OnConnectFailed(svcKey string) {
-	slog.Error("OnConnectFailed:", svcKey)
-}
-
-func (evMngr *EVHandlerManager) OnShutdown() {
-	slog.Info("OnShutdown")
-}
+var NetworkModule *Network.NetworkModule
 
 func main() {
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	slog.Configure(func(logger *slog.SugaredLogger) {
 		f := logger.Formatter.(*slog.TextFormatter)
@@ -51,8 +25,10 @@ func main() {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
-	var module Network.NetworkModule
-	manager := new(EVHandlerManager)
+	NetworkModule = Network.NewNetworkModule()
+
+	SessionMgr = CreateSessionManager()
+	go SessionMgr.Update(ctx, 33, SessionMgr.OnUpdate)
 
 	go func() {
 		slog.Info("Network starting")
@@ -61,9 +37,9 @@ func main() {
 			wg.Done()
 		}()
 
-		module.Listen("GMServer", "tcp://:9081")
-		module.Listen("CenterGameServer", "tcp://:9082")
-		module.Run(manager, 0)
+		NetworkModule.Listen("GMServer", "tcp://:9081")
+		NetworkModule.Listen("CenterGameServer", "tcp://:9082")
+		NetworkModule.Run(SessionMgr, 0)
 	}()
 
 	c := make(chan os.Signal)
@@ -73,12 +49,18 @@ func main() {
 			switch sig {
 			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
 				slog.Info("Exit with:", sig)
-				module.Shutdown()
+
+				cancel()
+
+				slog.Info("SessionMgr shutdown")
+				SessionMgr.Running = false
+				NetworkModule.Shutdown()
+
 				return
 			}
 		}
 	}()
 
 	wg.Wait()
-	slog.Info("end...")
+	slog.Info("CenterServer end")
 }
