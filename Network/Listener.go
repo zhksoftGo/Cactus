@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"strings"
 )
 
 type listener struct {
@@ -38,45 +37,6 @@ func reuseportListenPacket(proto, addr string) (l net.PacketConn, err error) {
 
 func reuseportListen(proto, addr string) (l net.Listener, err error) {
 	return nil, errors.New("reuseport is not available")
-}
-
-type addrOpts struct {
-	reusePort bool
-}
-
-//"tcp://localhost:5000?reuseport=1" -> tcp, localhost:5000, true
-func parseAddr(addr string) (network, address string, opts addrOpts) {
-	network = "tcp"
-	address = addr
-	opts.reusePort = false
-
-	if strings.Contains(address, "://") {
-		network = strings.Split(address, "://")[0]
-		address = strings.Split(address, "://")[1]
-	}
-
-	q := strings.Index(address, "?")
-	if q != -1 {
-		for _, part := range strings.Split(address[q+1:], "&") {
-			kv := strings.Split(part, "=")
-
-			if len(kv) == 2 {
-				switch kv[0] {
-				case "reuseport":
-					if len(kv[1]) != 0 {
-						switch kv[1][0] {
-						default:
-							opts.reusePort = kv[1][0] >= '1' && kv[1][0] <= '9'
-						case 'T', 't', 'Y', 'y':
-							opts.reusePort = true
-						}
-					}
-				}
-			}
-		}
-		address = address[:q]
-	}
-	return
 }
 
 type newListener struct {

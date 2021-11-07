@@ -11,7 +11,7 @@ import (
 	"github.com/zhksoftGo/Cactus/Network"
 )
 
-var NetworkModule *Network.NetworkModule
+var NetworkModule Network.INetworkModule
 
 func main() {
 
